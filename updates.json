@@ -1,7 +1,13 @@
 {
   "addons": {
     "arcadia-armory@moonmancer.local": {
-      "updates": []
+      "updates": [
+        {
+          "version": "1.0.0",
+          "update_link": "https://github.com/Moonmancer/arcadia-armory/releases/download/v1.0.0/arcadia-armory-1.0.0.xpi",
+          "update_hash": "sha256:6713e8bafb53a9f4f598cb2b3e2f6ba3a454d96eb26abf74bb336ae12b2f9fb5"
+        }
+      ]
     }
   }
 }
