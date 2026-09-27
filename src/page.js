@@ -1,0 +1,1869 @@
+// Runs in the calculator page's MAIN world so it can read the calculator's
+// globals (m_Item, m_Card, w_DMG, calc, ...). Persistence goes through
+// bridge.js via window.postMessage.
+(function () {
+	"use strict";
+
+	if (window.__arcadiaArmory || typeof m_Item === "undefined" || !document.calcForm) {
+		return;
+	}
+	window.__arcadiaArmory = true;
+
+	const form = document.calcForm;
+
+	// ---------------------------------------------------------------------------
+	// Slot definitions (calculator item type -> equipment select)
+	// ---------------------------------------------------------------------------
+
+	const SLOTS = [
+		{ key: "A_weapon1", label: "Weapon", short: "Weapon", refine: "A_Weapon_refine", cards: ["A_weapon1_card1", "A_weapon1_card2", "A_weapon1_card3", "A_weapon1_card4"] },
+		{ key: "A_weapon2", label: "Left Hand", short: "Left", refine: "A_Weapon2_refine", cards: ["A_weapon2_card1", "A_weapon2_card2", "A_weapon2_card3", "A_weapon2_card4"] },
+		{ key: "A_head1", label: "Upper Headgear", short: "Upper", refine: "A_HEAD_REFINE", cards: ["A_head1_card"] },
+		{ key: "A_head2", label: "Middle Headgear", short: "Middle", refine: null, cards: ["A_head2_card"] },
+		{ key: "A_head3", label: "Lower Headgear", short: "Lower", refine: null, cards: [] },
+		{ key: "A_body", label: "Armor", short: "Armor", refine: "A_BODY_REFINE", cards: ["A_body_card"] },
+		{ key: "A_left", label: "Shield", short: "Shield", refine: "A_LEFT_REFINE", cards: ["A_left_card"] },
+		{ key: "A_shoulder", label: "Garment", short: "Garment", refine: "A_SHOULDER_REFINE", cards: ["A_shoulder_card"] },
+		{ key: "A_shoes", label: "Footgear", short: "Footgear", refine: "A_SHOES_REFINE", cards: ["A_shoes_card"] },
+		{ key: "A_acces1", label: "Accessory 1", short: "Acc 1", refine: null, cards: ["A_acces1_card"] },
+		{ key: "A_acces2", label: "Accessory 2", short: "Acc 2", refine: null, cards: ["A_acces2_card"] },
+	];
+	const SLOT_BY_KEY = Object.fromEntries(SLOTS.map((s) => [s.key, s]));
+
+	function typeLabel(type) {
+		if (type >= 1 && type <= 21) return "Weapon";
+		return { 50: "Upper Headgear", 51: "Middle Headgear", 52: "Lower Headgear", 60: "Armor", 61: "Shield", 62: "Garment", 63: "Footgear", 64: "Accessory" }[type] || "?";
+	}
+
+	function isEquipType(type) {
+		return (type >= 1 && type <= 21) || (type >= 50 && type <= 52) || (type >= 60 && type <= 64);
+	}
+
+	function el(name) {
+		return form.elements.namedItem(name);
+	}
+
+	function hasOption(select, value) {
+		const v = String(value);
+		for (const o of select.options) {
+			if (o.value === v) return true;
+		}
+		return false;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Name matching against the calculator's item / card database
+	// ---------------------------------------------------------------------------
+
+	function norm(s) {
+		return String(s)
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[̀-ͯ]/g, "")
+			.replace(/\[[^\]]*\]/g, " ")
+			.replace(/['’`´]/g, "")
+			.replace(/[^a-z0-9]+/g, " ")
+			.trim();
+	}
+
+	// Possessives are ignored in a second index: "Gentleman's Staff" vs. calculator "Gentleman Staff".
+	const looseNorm = (s) => norm(String(s).replace(/['’]s\b/gi, ""));
+
+	const itemIndex = new Map(); // normalized name -> [calc item ids]
+	const itemIndexLoose = new Map();
+	const addTo = (index, key, id) => {
+		if (!key) return;
+		if (!index.has(key)) index.set(key, []);
+		index.get(key).push(id);
+	};
+	for (const it of m_Item) {
+		const name = String(it[8] || "");
+		if (!isEquipType(it[1]) || name.startsWith("(")) continue;
+		for (const alias of name.split(" / ")) {
+			addTo(itemIndex, norm(alias), it[0]);
+			addTo(itemIndexLoose, looseNorm(alias), it[0]);
+		}
+	}
+
+	// Longest first, so the most specific prefix wins.
+	const itemNamesByLength = [...itemIndex.keys()].filter((n) => n.length >= 4).sort((a, b) => b.length - a.length);
+
+	// Card names without the " card" suffix. The calculator also models forged
+	// weapons through the card slots ("* Element Stone (Fire)", "* Star Crumb").
+	const cardIndex = new Map(); // normalized card name -> [calc card ids]
+	if (typeof m_Card !== "undefined") {
+		for (const cd of m_Card) {
+			const name = String(cd[2] || "").replace(/^\*\s*/, "");
+			if (!cd[0] || name.startsWith("(") || /^(unused|\d+)$/i.test(name)) continue;
+			const n = norm(name).replace(/ card$/, "");
+			if (!cardIndex.has(n)) cardIndex.set(n, []);
+			cardIndex.get(n).push(cd[0]);
+		}
+	}
+
+	const FORGE_STONE = { fire: "element stone fire", ice: "element stone water", wind: "element stone wind", earth: "element stone earth" };
+
+	function isWeaponId(id) {
+		return m_Item[id] && m_Item[id][1] >= 1 && m_Item[id][1] <= 21;
+	}
+
+	// Resolves an item name (refine already stripped) to a calculator item.
+	// Returns { calcId, cards } where cards are extra slot contents implied by
+	// the name (forged weapons), or null for non-equipment.
+	// Game item IDs whose name alone is ambiguous in the calculator. Referenced by
+	// calculator name + slot count so the mapping survives calculator updates.
+	const GAME_ID_OVERRIDES = {
+		1617: { name: "Survivor's Rod (DEX)", slots: 0 },
+		1618: { name: "Survivor's Rod (DEX)", slots: 1 },
+		1619: { name: "Survivor's Rod (INT)", slots: 0 },
+		1620: { name: "Survivor's Rod (INT)", slots: 1 },
+		5171: { name: "Valkyrian Helm", slots: 1 }, // "Valkyrie Helm [1]" in game
+	};
+
+	// Calculator slot count; for weapons stored like "3/4" (base/max) -> max.
+	function calcSlots(id) {
+		const v = m_Item[id] && m_Item[id][5];
+		if (typeof v === "string") return Number(v.split("/").pop()) || 0;
+		return Number(v) || 0;
+	}
+
+	function byGameId(gameId) {
+		const o = GAME_ID_OVERRIDES[gameId];
+		if (!o) return null;
+		const it = m_Item.find((i) => i[8] === o.name && calcSlots(i[0]) === o.slots);
+		return it ? it[0] : null;
+	}
+
+	// Several calculator items can share a name (e.g. with and without slot):
+	// prefer the one whose slot count matches "[n]" in the listed name.
+	function pick(ids, text) {
+		if (ids.length === 1) return ids[0];
+		const m = String(text).match(/\[(\d)\]/);
+		const slots = m ? Number(m[1]) : 0;
+		return ids.find((id) => calcSlots(id) === slots) ?? ids[0];
+	}
+
+	function matchItem(text, gameId) {
+		const forced = gameId != null ? byGameId(gameId) : null;
+		if (forced != null) return { calcId: forced, cards: [] };
+		const raw = text.replace(/\([^)]*\)/g, " ").trim();
+		const n = norm(raw);
+		if (!n || / card$/.test(n) || / costume$/.test(n)) return null;
+		if (itemIndex.has(n)) return { calcId: pick(itemIndex.get(n), text), cards: [] };
+		const loose = looseNorm(raw);
+		if (itemIndexLoose.has(loose)) return { calcId: pick(itemIndexLoose.get(loose), text), cards: [] };
+
+		// Forged weapon: "[Very ]Very Strong [Maker's] [Fire|Ice|Wind|Earth] <Weapon>"
+		const forge = raw.replace(/\s*\[[^\]]*\]/g, "").match(/^((?:very\s+)*)(strong\s+)?(?:(.+?)['’]s\s+)?(?:(fire|ice|wind|earth)\s+)?(.+)$/i);
+		if (forge && (forge[2] || forge[4])) {
+			const base = norm(forge[5]);
+			const id = itemIndex.has(base) ? pick(itemIndex.get(base), text) : null;
+			if (id != null && isWeaponId(id)) {
+				const cards = [];
+				if (forge[4]) cards.push(FORGE_STONE[forge[4].toLowerCase()]);
+				const crumbs = forge[2] ? Math.min(3, (forge[1].match(/very/gi) || []).length) : 0;
+				for (let i = 0; i < crumbs; i++) cards.push("star crumb");
+				return { calcId: id, cards };
+			}
+		}
+
+		// Calculator names are sometimes shortened ("Fuuma Calm Mind" for
+		// "Fuuma Calm Mind Shuriken"). Only trust a prefix match when the line is
+		// clearly equipment (has card slots), otherwise "Dead Branch", "Wolf Claw"
+		// etc. would turn into weapons.
+		if (/\[\d\]/.test(text)) {
+			for (const name of itemNamesByLength) {
+				if (n.startsWith(name + " ")) return { calcId: pick(itemIndex.get(name), text), cards: [] };
+			}
+		}
+		return null;
+	}
+
+	function matchCard(text) {
+		const n = norm(text).replace(/ card$/, "");
+		return cardIndex.has(n) ? n : null;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Parsing the pasted list
+	// ---------------------------------------------------------------------------
+	//
+	// Expected (control panel item search):
+	//   <id>\t<+refine> <name> [slots]\t<amount>\t[options]\t<cards|None>\t<location>
+	// where cards may also follow on their own lines and the location on the
+	// last line of the entry. Plain lines with just an item name also work.
+
+	const ENTRY_START = /^\s*(\d+)\s*\t\s*([^\t]+?)\s*\t\s*(\d+)\s*(?:\t(.*))?$/;
+
+	// ---------------------------------------------------------------------------
+	// Pre-trans WoE blacklist (src/woe-blacklist.js)
+	// ---------------------------------------------------------------------------
+	//
+	// The list names game items ("Zweihander [2] (1171)"). Own copies are checked
+	// by their game id; calculator items by name (+ slot count where the calculator
+	// has separate entries per slot count).
+
+	const WOE_LIST = (window.__AA_WOE_BLACKLIST && window.__AA_WOE_BLACKLIST.items) || [];
+	const WOE_AS_OF = (window.__AA_WOE_BLACKLIST && window.__AA_WOE_BLACKLIST.asOf) || "?";
+	const woeGameIds = new Set(WOE_LIST.map((r) => r[2]));
+	const woeCalcIds = new Set();
+	const woeCardIds = new Set();
+	for (const [name, slots, gameId] of WOE_LIST) {
+		if (/ card$/i.test(name)) {
+			(cardIndex.get(norm(name).replace(/ card$/, "")) || []).forEach((id) => woeCardIds.add(id));
+			continue;
+		}
+		const forced = byGameId(gameId);
+		if (forced != null) {
+			woeCalcIds.add(forced);
+			continue;
+		}
+		const ids = itemIndex.get(norm(name)) || itemIndexLoose.get(looseNorm(name)) || [];
+		const exact = ids.filter((id) => calcSlots(id) === slots);
+		(exact.length ? exact : ids).forEach((id) => woeCalcIds.add(id));
+	}
+
+	function woeBlockedInstance(inst) {
+		return inst.gameId != null ? woeGameIds.has(Number(inst.gameId)) : woeCalcIds.has(inst.calcId);
+	}
+
+	// Own copies that may be used under the current WoE setting.
+	function usableInstances(calcId) {
+		const insts = ownedById.get(calcId) || [];
+		return state.settings.woe ? insts.filter((i) => !woeBlockedInstance(i)) : insts;
+	}
+
+	// Hide a calculator item? Not if an own, allowed copy of it exists (the
+	// calculator often merges slot variants of which only one is forbidden).
+	function woeHidesItem(calcId) {
+		if (!state.settings.woe || !woeCalcIds.has(calcId)) return false;
+		return !(ownedById.get(calcId) || []).some((i) => !woeBlockedInstance(i));
+	}
+
+	// Text -> raw entries { gameId, rawName, amount, cards: [card texts], location, flags }
+	function parseText(text) {
+		const lines = String(text).replace(/\r/g, "").split("\n");
+		const entries = [];
+		let cur = null;
+
+		const finish = () => {
+			if (cur) entries.push(cur);
+			cur = null;
+		};
+
+		const absorb = (chunk) => {
+			for (const raw of chunk.split("\t")) {
+				const t = raw.trim();
+				if (!t || /^\[?none\]?$/i.test(t)) continue;
+				if (matchCard(t) || /card$/i.test(t)) cur.cards.push(t);
+				else cur.location = t;
+			}
+		};
+
+		for (const line of lines) {
+			const m = line.match(ENTRY_START);
+			if (m) {
+				finish();
+				cur = { gameId: Number(m[1]), rawName: m[2], amount: Number(m[3]) || 1, cards: [], location: "", flags: [] };
+				if (m[4]) absorb(m[4]);
+			} else if (cur) {
+				if (line.trim()) absorb(line);
+			} else if (line.trim()) {
+				// Plain line without the table layout, e.g. "+7 Blade [3]" or "2x Blade"
+				const qty = line.match(/^\s*(\d+)\s*[x×]\s+/i) || line.match(/\s[x×]\s*(\d+)\s*$/i);
+				const name = line.replace(/^\s*\d+\s*[x×]\s+/i, "").replace(/\s[x×]\s*\d+\s*$/i, "").trim();
+				entries.push({ gameId: null, rawName: name, amount: qty ? Number(qty[1]) : 1, cards: [], location: "", flags: [] });
+			}
+		}
+		finish();
+		return entries;
+	}
+
+	// Raw entries (from pasted text or the control panel) -> owned equipment.
+	function resolveEntries(entries) {
+		const items = [];
+		const unmatched = [];
+		for (const e of entries) {
+			const rawName = String(e.rawName || "").trim();
+			const refineM = rawName.match(/^\+\s*(\d{1,2})\s+/);
+			const match = matchItem(refineM ? rawName.slice(refineM[0].length) : rawName, e.gameId);
+			if (!match) {
+				if (rawName && !matchCard(rawName)) unmatched.push(rawName);
+				continue;
+			}
+			const cards = [];
+			const unknownCards = [];
+			for (const c of e.cards || []) {
+				const n = matchCard(c);
+				if (n) cards.push(n);
+				else unknownCards.push(String(c));
+			}
+			items.push({
+				calcId: match.calcId,
+				gameId: e.gameId ?? null,
+				name: m_Item[match.calcId][8],
+				rawName,
+				refine: refineM ? Math.min(20, Number(refineM[1])) : 0,
+				cards: [...match.cards, ...cards],
+				unknownCards,
+				location: String(e.location || ""),
+				flags: Array.isArray(e.flags) ? e.flags.map(String) : [],
+				count: Number(e.amount) || 1,
+			});
+		}
+		return { items: dedupe(items), unmatched: [...new Set(unmatched)] };
+	}
+
+	function parseList(text) {
+		return resolveEntries(parseText(text));
+	}
+
+	function instanceKey(it) {
+		return [it.calcId, it.refine, it.cards.slice().sort().join(","), it.location, (it.flags || []).join(",")].join("|");
+	}
+
+	function dedupe(items) {
+		const map = new Map();
+		for (const it of items) {
+			const k = instanceKey(it);
+			if (map.has(k)) map.get(k).count += it.count;
+			else map.set(k, { ...it, uid: Math.random().toString(36).slice(2, 10) });
+		}
+		return [...map.values()];
+	}
+
+	// ---------------------------------------------------------------------------
+	// State & persistence
+	// ---------------------------------------------------------------------------
+
+	const DEFAULT_SETTINGS = {
+		onlyOwned: false, // hide non-owned items in the equipment selects
+		preview: "all", // "all" | "owned" | "off": damage preview in the dropdowns
+		metric: "dps", // "dps" | "hit"
+		combo: true, // replace the equipment selects with a search field
+		comboSort: "name", // "name" | "dmg": order of the search field's list
+		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
+		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
+		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
+		applyInstance: true, // apply refine + cards of an owned item on selection
+		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
+	};
+
+	const state = {
+		items: [],
+		unmatched: [],
+		settings: { ...DEFAULT_SETTINGS },
+	};
+	let ownedById = new Map(); // calcId -> [instances]
+
+	function rebuildOwned() {
+		ownedById = new Map();
+		for (const it of state.items) {
+			if (!ownedById.has(it.calcId)) ownedById.set(it.calcId, []);
+			ownedById.get(it.calcId).push(it);
+		}
+	}
+
+	function save() {
+		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, settings: state.settings } }, window.location.origin);
+	}
+
+	window.addEventListener("message", (event) => {
+		if (event.source !== window || !event.data || event.data.aa !== "toPage") return;
+		if (event.data.type === "inbox") {
+			const inbox = event.data.data;
+			ui.inbox = inbox && Array.isArray(inbox.entries) ? inbox : null;
+			if (ui.inbox) panel.classList.add("aa-open");
+			renderPanel();
+			return;
+		}
+		if (event.data.type !== "data") return;
+		const d = event.data.data || {};
+		state.items = Array.isArray(d.items) ? d.items : [];
+		state.unmatched = Array.isArray(d.unmatched) ? d.unmatched : [];
+		state.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
+		applyTheme(state.settings.theme);
+		rebuildOwned();
+		invalidate();
+		refreshSelects();
+		renderPanel();
+	});
+
+	// ---------------------------------------------------------------------------
+	// Damage simulation using the calculator's own engine
+	// ---------------------------------------------------------------------------
+
+	const origCalc = window.calc;
+	const origStAllCalc = window.StAllCalc;
+	let simulating = false;
+	let applying = false; // set while the panel equips an exact instance
+	let calcVersion = 0;
+
+	function invalidate() {
+		calcVersion++;
+		scheduleComboSync();
+	}
+
+	window.calc = function () {
+		const r = origCalc.apply(this, arguments);
+		if (!simulating) {
+			invalidate();
+			rememberAmmo();
+		}
+		return r;
+	};
+	window.StAllCalc = function () {
+		const r = origStAllCalc.apply(this, arguments);
+		if (!simulating) invalidate();
+		return r;
+	};
+
+	function measure() {
+		const avg = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
+		const t = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
+		if (state.settings.metric === "hit" || !(t > 0)) return avg;
+		return avg / t;
+	}
+
+	// Values that a simulated variant sets on the form. Refine/card keys are
+	// included even if their select doesn't exist yet (left hand before dual
+	// wielding is enabled); simulate() skips values a select can't take.
+	function variantFor(slot, calcId, inst) {
+		const v = { [slot.key]: String(calcId) };
+		if (inst) {
+			if (slot.refine) v[slot.refine] = String(inst.refine);
+			slot.cards.forEach((name, i) => {
+				v[name] = String(resolveCard(el(name), inst.cards[i]));
+			});
+		}
+		return v;
+	}
+
+	function resolveCard(select, cardName) {
+		if (!cardName) return 0;
+		const ids = cardIndex.get(cardName) || [];
+		if (!select) return ids[0] || 0;
+		for (const id of ids) {
+			if (hasOption(select, id)) return id;
+		}
+		return 0;
+	}
+
+	// Calls calculator functions without their UI side effects (skill list
+	// rebuild, item description box).
+	function quietly(fn) {
+		const saved = { ActiveSkillSetPlus: window.ActiveSkillSetPlus, ClickB_Item: window.ClickB_Item };
+		window.ActiveSkillSetPlus = () => {};
+		window.ClickB_Item = () => {};
+		try {
+			fn();
+		} finally {
+			Object.assign(window, saved);
+		}
+	}
+
+	// The calculator only counts the left-hand weapon while dual wielding is
+	// active (n_Nitou), and only then do its refine/card selects exist.
+	function setDualWield(value) {
+		const w2 = el("A_weapon2");
+		if (!w2 || typeof ClickWeaponType2 !== "function") return;
+		const on = String(value) !== "0";
+		if (on === Boolean(n_Nitou)) return;
+		quietly(() => {
+			w2.value = String(value);
+			ClickWeaponType2(on ? String(value) : 0);
+		});
+	}
+
+	function setValue(select, value) {
+		if (value !== undefined && hasOption(select, value)) select.value = String(value);
+		else if (hasOption(select, "0")) select.value = "0";
+	}
+
+	// Evaluates each variant (a map select name -> value), restoring the form afterwards.
+	function simulate(variants) {
+		const touched = new Set();
+		variants.forEach((v) => Object.keys(v).forEach((k) => touched.add(k)));
+		const dual = touched.has("A_weapon2") && el("A_weapon2");
+		if (dual) {
+			// Toggling dual wield rebuilds these, so they must always be restored.
+			const left = SLOT_BY_KEY.A_weapon2;
+			[left.refine, ...left.cards].forEach((k) => touched.add(k));
+		}
+		const snapshot = {};
+		touched.forEach((k) => {
+			const s = el(k);
+			if (s) snapshot[k] = s.value;
+		});
+
+		simulating = true;
+		const results = [];
+		try {
+			for (const v of variants) {
+				if (dual) setDualWield("A_weapon2" in v ? v.A_weapon2 : snapshot.A_weapon2);
+				for (const k of touched) {
+					const s = el(k);
+					if (s) setValue(s, k in v ? v[k] : snapshot[k]);
+				}
+				try {
+					origCalc();
+					results.push(measure());
+				} catch (e) {
+					results.push(NaN);
+				}
+			}
+		} finally {
+			if (dual) setDualWield(snapshot.A_weapon2);
+			for (const k of touched) {
+				const s = el(k);
+				if (s && k in snapshot) s.value = snapshot[k];
+			}
+			try {
+				origCalc();
+			} catch (e) {
+				/* the calculator itself failed; nothing we can restore */
+			}
+			// Our own select rebuilds are not a reason to redecorate, but rebuilt
+			// selects (left-hand cards) need their search field back.
+			formObserver.takeRecords();
+			simulating = false;
+			scheduleComboSync();
+		}
+		return results;
+	}
+
+	function baseline() {
+		simulating = true;
+		try {
+			origCalc();
+			return measure();
+		} finally {
+			simulating = false;
+		}
+	}
+
+	function formatDelta(value, base) {
+		if (!Number.isFinite(value)) return "";
+		if (base > 0) {
+			const pct = ((value - base) / base) * 100;
+			if (Math.abs(pct) < 0.05) return "±0%";
+			return (pct > 0 ? "▲ +" : "▼ −") + Math.abs(pct).toFixed(1) + "%";
+		}
+		const d = value - base;
+		if (Math.abs(d) < 0.005) return "±0";
+		return (d > 0 ? "▲ +" : "▼ −") + Math.abs(d).toFixed(1);
+	}
+
+	function instanceSummary(inst) {
+		const parts = [];
+		if (inst.refine) parts.push("+" + inst.refine);
+		const counts = {};
+		inst.cards.forEach((c) => (counts[c] = (counts[c] || 0) + 1));
+		for (const [c, n] of Object.entries(counts)) parts.push((n > 1 ? n + "× " : "") + titleCase(c));
+		return parts.join(" · ");
+	}
+
+	function titleCase(s) {
+		return s.replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+	}
+
+	// Best owned instance of calcId for a slot, evaluated with its refine + cards.
+	function evaluateOwned(slot, calcId) {
+		const insts = usableInstances(calcId);
+		if (!insts.length) return null;
+		const vals = simulate(insts.map((inst) => variantFor(slot, calcId, state.settings.applyInstance ? inst : null)));
+		// Highest damage; on a tie (e.g. headgear refine doesn't affect damage) the
+		// better copy: higher refine, then more cards.
+		const better = (i, j) => vals[i] - vals[j] || insts[i].refine - insts[j].refine || insts[i].cards.length - insts[j].cards.length;
+		let best = 0;
+		vals.forEach((v, i) => {
+			if (better(i, best) > 0) best = i;
+		});
+		return { inst: insts[best], value: vals[best] };
+	}
+
+	// ---------------------------------------------------------------------------
+	// Equipment select decoration: ★ marker, filter, damage preview
+	// ---------------------------------------------------------------------------
+
+	function slotSelects() {
+		return SLOTS.map((s) => ({ slot: s, select: el(s.key) })).filter((x) => x.select && x.select.tagName === "SELECT");
+	}
+
+	function isNoneOption(opt) {
+		return opt.value === "0" || /^\(/.test(opt.dataset.aaOrig ?? opt.text);
+	}
+
+	function renderOption(opt) {
+		if (!("aaOrig" in opt.dataset)) opt.dataset.aaOrig = opt.text;
+		const owned = ownedById.has(Number(opt.value)) && !isNoneOption(opt);
+		let text = (owned ? "★ " : "") + opt.dataset.aaOrig;
+		if (opt.dataset.aaDelta) text += "   " + opt.dataset.aaDelta;
+		if (opt.text !== text) opt.text = text;
+	}
+
+	function applyFilter(select) {
+		const only = state.settings.onlyOwned && state.items.length > 0;
+		for (const opt of select.options) {
+			const id = Number(opt.value);
+			const owned = usableInstances(id).length > 0;
+			const keep = isNoneOption(opt) || opt.selected || ((!only || owned) && !woeHidesItem(id));
+			opt.hidden = !keep;
+			opt.disabled = !keep;
+			renderOption(opt);
+		}
+		for (const g of select.querySelectorAll("optgroup")) {
+			g.hidden = ![...g.children].some((o) => !o.hidden);
+		}
+	}
+
+	// Card selects: only the WoE filter applies.
+	function applyCardFilter(select) {
+		for (const opt of select.options) {
+			const keep = !state.settings.woe || opt.selected || !woeCardIds.has(Number(opt.value));
+			opt.hidden = !keep;
+			opt.disabled = !keep;
+		}
+	}
+
+	function refreshSelects() {
+		for (const { select } of slotSelects()) applyFilter(select);
+		for (const name of SLOTS.flatMap((sl) => sl.cards)) {
+			const sel = el(name);
+			if (sel && sel.tagName === "SELECT") applyCardFilter(sel);
+		}
+		const shortcuts = el("A_cardshort");
+		if (shortcuts) {
+			for (const opt of shortcuts.options) {
+				if (!opt.value.startsWith(SET_PREFIX)) continue;
+				opt.hidden = opt.disabled = equipSetHidden(EQUIP_SETS[Number(opt.value.slice(SET_PREFIX.length))]);
+			}
+		}
+		updateSwapButton();
+		syncCombos();
+	}
+
+	function annotate(slot, select) {
+		if (state.settings.preview === "off") {
+			clearAnnotations(select);
+			return;
+		}
+		if (Number(select.dataset.aaVer) === calcVersion) return;
+
+		const base = baseline();
+		const plain = [];
+		const ownedOpts = [];
+		for (const opt of select.options) {
+			if (opt.hidden) continue;
+			const id = Number(opt.value);
+			if (ownedById.has(id) && !isNoneOption(opt)) ownedOpts.push(opt);
+			else if (state.settings.preview === "all" || isNoneOption(opt)) plain.push(opt);
+			else delete opt.dataset.aaDelta;
+		}
+
+		const plainVals = simulate(plain.map((o) => ({ [slot.key]: o.value })));
+		plain.forEach((o, i) => {
+			o.dataset.aaDelta = o.selected ? "" : formatDelta(plainVals[i], base);
+			renderOption(o);
+		});
+		for (const o of ownedOpts) {
+			const r = evaluateOwned(slot, Number(o.value));
+			const summary = r && instanceSummary(r.inst);
+			o.dataset.aaDelta = r ? formatDelta(r.value, base) + (summary ? `  (${summary})` : "") : "";
+			renderOption(o);
+		}
+		select.dataset.aaVer = String(calcVersion);
+	}
+
+	function clearAnnotations(select) {
+		for (const opt of select.options) {
+			delete opt.dataset.aaDelta;
+			renderOption(opt);
+		}
+		delete select.dataset.aaVer;
+	}
+
+	function slotOfTarget(target) {
+		if (!target || target.tagName !== "SELECT" || target.form !== form) return null;
+		return SLOT_BY_KEY[target.name] || null;
+	}
+
+	// Annotate right before the dropdown opens.
+	const onOpen = (e) => {
+		const slot = slotOfTarget(e.target);
+		if (slot) annotate(slot, e.target);
+	};
+	document.addEventListener("mousedown", onOpen, true);
+	document.addEventListener("focusin", onOpen, true);
+
+	// ---------------------------------------------------------------------------
+	// Keep the chosen ammo when switching weapons
+	// ---------------------------------------------------------------------------
+	//
+	// ClickWeaponType() rebuilds the ammo select on every weapon change, which
+	// resets it to the first entry. Remember the ammo per kind and put it back
+	// when the new weapon uses the same kind.
+
+	function ammoKind(weaponId) {
+		const type = m_Item[weaponId] ? m_Item[weaponId][1] : 0;
+		if (type === 10 || type === 14 || type === 15) return "arrow"; // bows, instruments, whips
+		if (type >= 17 && type <= 20) return "bullet"; // guns
+		if (type === 21) return "grenade";
+		return null;
+	}
+
+	let weaponChanging = false;
+
+	function rememberAmmo() {
+		const w = el("A_weapon1");
+		const arrow = el("A_Arrow");
+		const kind = w && ammoKind(Number(w.value));
+		if (weaponChanging || !kind || !arrow || arrow.disabled) return;
+		if (state.settings.lastAmmo[kind] === arrow.value) return;
+		state.settings.lastAmmo = { ...state.settings.lastAmmo, [kind]: arrow.value };
+		save();
+	}
+
+	document.addEventListener(
+		"change",
+		(e) => {
+			if (e.target.form !== form || e.target.name !== "A_weapon1" || simulating) return;
+			// Runs before the calculator's own handler, which resets the ammo.
+			weaponChanging = true;
+			setTimeout(() => {
+				weaponChanging = false;
+				const arrow = el("A_Arrow");
+				const kind = ammoKind(Number(el("A_weapon1").value));
+				const want = kind && state.settings.lastAmmo[kind];
+				if (arrow && want != null && arrow.value !== want && hasOption(arrow, want)) {
+					arrow.value = want;
+					arrow.dispatchEvent(new Event("change", { bubbles: true })); // runs calc()
+				}
+			}, 0);
+		},
+		true
+	);
+
+	// Selecting an owned item also applies its refine + cards.
+	document.addEventListener(
+		"change",
+		(e) => {
+			const slot = slotOfTarget(e.target);
+			if (!slot || simulating || applying) return;
+			const select = e.target;
+			const id = Number(select.value);
+			if (state.settings.applyInstance && ownedById.has(id)) {
+				const r = evaluateOwned(slot, id);
+				if (r) setTimeout(() => applyVariant(slot, variantFor(slot, id, r.inst), false), 0);
+			}
+			setTimeout(() => {
+				applyFilter(select);
+				updateSwapButton();
+				select.blur();
+			}, 0);
+		},
+		true
+	);
+
+	// Sets values like a user would, firing the calculator's own handlers.
+	function applyVariant(slot, variant, includeItem) {
+		const order = [slot.key, slot.refine, ...slot.cards].filter(Boolean);
+		for (const k of order) {
+			if (!(k in variant) || (k === slot.key && !includeItem)) continue;
+			const s = el(k);
+			if (!s || !hasOption(s, variant[k])) continue;
+			if (s.value !== variant[k] || k === slot.key) {
+				s.value = variant[k];
+				s.dispatchEvent(new Event("change", { bubbles: true }));
+			}
+		}
+		refreshSelects();
+	}
+
+	// ---------------------------------------------------------------------------
+	// Dual wield: swap right- and left-hand weapon (incl. refine + cards)
+	// ---------------------------------------------------------------------------
+
+	function handState(slot) {
+		const v = {};
+		for (const k of [slot.key, slot.refine, ...slot.cards]) {
+			const s = el(k);
+			v[k] = s ? s.value : "0";
+		}
+		return v;
+	}
+
+	// Why the current right-hand weapon can't go to the left hand, or "".
+	function swapBlocker() {
+		const right = el("A_weapon1");
+		const left = el("A_weapon2");
+		if (!right || !left) return "Kein Dual Wield";
+		if (right.value === "0" && left.value === "0") return "Keine Waffen angelegt";
+		if (!hasOption(left, right.value)) return "Die rechte Waffe kann nicht in die linke Hand";
+		return "";
+	}
+
+	// Values of one hand moved to the other hand's selects.
+	const toVariant = (from, to, values) => Object.fromEntries([from.key, from.refine, ...from.cards].map((k, i) => [[to.key, to.refine, ...to.cards][i], values[k]]));
+
+	function swapHands() {
+		if (swapBlocker()) return;
+		const R = SLOT_BY_KEY.A_weapon1;
+		const L = SLOT_BY_KEY.A_weapon2;
+		const right = handState(R);
+		const left = handState(L);
+
+		applying = true;
+		try {
+			applyVariant(R, toVariant(L, R, left), true);
+			applyVariant(L, toVariant(R, L, right), true);
+		} finally {
+			applying = false;
+		}
+		invalidate();
+		refreshSelects();
+	}
+
+	const swapBtn = h("button", { type: "button", class: "aa-swap", title: "Waffen links/rechts tauschen (inkl. Verfeinerung und Karten)", onclick: swapHands }, "⇄");
+	const swapDelta = h("span", { class: "aa-swapdelta" });
+	let swapDeltaVersion = null;
+
+	// Damage change if both hands were swapped, simulated with the calculator.
+	function updateSwapDelta(blocker) {
+		if (blocker || state.settings.preview === "off") {
+			swapDelta.textContent = "";
+			swapDeltaVersion = null;
+			return;
+		}
+		if (swapDeltaVersion === calcVersion) return;
+		swapDeltaVersion = calcVersion;
+		const R = SLOT_BY_KEY.A_weapon1;
+		const L = SLOT_BY_KEY.A_weapon2;
+		const variant = { ...toVariant(L, R, handState(L)), ...toVariant(R, L, handState(R)) };
+		const base = baseline();
+		const [value] = simulate([variant]);
+		const unit = state.settings.metric === "dps" ? "Schaden/Sek." : "Schaden/Treffer";
+		swapDelta.textContent = formatDelta(value, base);
+		swapDelta.className = "aa-swapdelta " + (value > base ? "aa-up" : value < base ? "aa-down" : "");
+		swapDelta.title = Number.isFinite(value) ? `Nach dem Tausch: ${value.toFixed(2)} ${unit} (jetzt ${base.toFixed(2)})` : "";
+	}
+
+	function updateSwapButton() {
+		const left = el("A_weapon2");
+		if (!left || left.tagName !== "SELECT") {
+			swapBtn.remove();
+			swapDelta.remove();
+			return;
+		}
+		// Next to the "Left Hand:" label; the select's column is too narrow.
+		const label = document.getElementById("A_SobWeaponName");
+		if (label && label.textContent.trim()) {
+			if (swapBtn.parentNode !== label) label.append(swapBtn);
+		} else if (swapBtn.previousElementSibling !== left) {
+			left.after(swapBtn);
+		}
+		const blocker = swapBlocker();
+		swapBtn.disabled = Boolean(blocker);
+		swapBtn.title = blocker || "Waffen links/rechts tauschen (inkl. Verfeinerung und Karten)";
+		if (swapDelta.previousSibling !== swapBtn) swapBtn.after(swapDelta);
+		updateSwapDelta(blocker);
+	}
+
+	// The calculator rebuilds its selects (job change, dual wield, ...): re-decorate.
+	let refreshQueued = false;
+	const formObserver = new MutationObserver((records) => {
+		if (simulating || refreshQueued) return;
+		// Ignore option text updates and changes to the add-on's own elements.
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta") || n.closest(".aa-combo, .aa-swapdelta"));
+		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && ![...r.addedNodes, ...r.removedNodes].every((n) => ours(n) || n.nodeType === 3 && ours(r.target));
+		if (!records.some(relevant)) return;
+		refreshQueued = true;
+		setTimeout(() => {
+			refreshQueued = false;
+			invalidate();
+			refreshSelects();
+		}, 0);
+	});
+	formObserver.observe(form, { childList: true, subtree: true });
+
+	// ---------------------------------------------------------------------------
+	// Search field ("combo") replacing the equipment selects
+	// ---------------------------------------------------------------------------
+	//
+	// The original select stays in the form (hidden): the calculator keeps reading
+	// it, saves/URL loading keep working, and picking a row simply sets its value
+	// and fires its change handler.
+
+	const combos = new Map(); // select name -> { slot, select, input, wrap, width, badge }
+
+	// Card selects of every slot, searchable like the slots but only with the
+	// calculator's own card list (no owned items).
+	const CARD_FIELDS = SLOTS.flatMap((slot) =>
+		slot.cards.map((name, i) => ({
+			key: name,
+			label: slot.cards.length > 1 ? `${slot.label} Card ${i + 1}` : `${slot.label} Card`,
+			short: slot.cards.length > 1 ? `Card ${i + 1}` : "Card",
+			card: true,
+			refine: null,
+			cards: [],
+		}))
+	);
+
+	// "(card shortcuts)": an action select whose calculator function fills several
+	// card selects at once (depending on the monster for some entries).
+	const SHORTCUT_FIELDS = [
+		{ key: "A_cardshort", label: "Weapon Card Shortcuts", short: "Shortcut", shortcut: "Setm_CardShort", refine: null, cards: [] },
+		{ key: "A_cardshortLeft", label: "Left Hand Card Shortcuts", short: "Shortcut", shortcut: "Setm_CardShortLeft", refine: null, cards: [] },
+	];
+
+	// The enemy select in the side bar; its list is (re)built by the calculator's
+	// place/sort filters above it.
+	// listOnly: searchable list without damage preview / sorting (choosing one
+	// changes the whole character or target, so a delta would say nothing).
+	const MONSTER_FIELD = { key: "B_Enemy", label: "Monster", short: "", monster: true, listOnly: true, refine: null, cards: [] };
+	const JOB_FIELD = { key: "A_JOB", label: "Class", short: "", listOnly: true, refine: null, cards: [] };
+
+	const stripTags = (html) => String(html || "").replace(/<[^>]*>/g, "").trim();
+
+	// The calculator's own color class of a race / element entry ("RaceDemihuman", "eleWind").
+	const classOf = (html) => (String(html || "").match(/class='([^' ]+)/) || [])[1] || "";
+
+	// "Lv 71 · Demi-Human · Wind 2 · Medium · 11,170 HP · Boss" as parts; race and
+	// element carry the calculator's color classes.
+	function monsterInfo(index) {
+		const m = typeof m_Monster !== "undefined" && m_Monster[index];
+		if (!m) return [];
+		const eleIdx = Math.floor(m[3] / 10);
+		const parts = [
+			{ text: m[5] != null ? `Lv ${m[5]}` : "" },
+			typeof v_Race !== "undefined" ? { text: stripTags(v_Race[m[2]]), cls: classOf(v_Race[m[2]]) } : { text: "" },
+			typeof v_Element_ !== "undefined" ? { text: `${String(v_Element_[eleIdx] || "").trim()} ${m[3] % 10}`, cls: typeof v_Element !== "undefined" ? classOf(v_Element[eleIdx]) : "" } : { text: "" },
+			{ text: typeof v_Size !== "undefined" ? v_Size[m[4]] : "" },
+			{ text: Number(m[6]) ? Number(m[6]).toLocaleString("en-US") + " HP" : "" },
+			{ text: m[19] === 1 ? "Boss" : "" },
+		];
+		return parts.filter((p) => p.text);
+	}
+
+	function renderSub(sub) {
+		if (!Array.isArray(sub)) return sub;
+		return sub.flatMap((p, i) => [i ? " · " : "", p.cls ? h("span", { class: p.cls }, p.text) : p.text]);
+	}
+
+	function comboSelects() {
+		const extra = [...CARD_FIELDS, ...SHORTCUT_FIELDS, MONSTER_FIELD, JOB_FIELD].map((d) => ({ slot: d, select: el(d.key) })).filter((x) => x.select && x.select.tagName === "SELECT");
+		return [...slotSelects(), ...extra];
+	}
+
+	// ---------------------------------------------------------------------------
+	// Equipment sets in the card shortcut list
+	// ---------------------------------------------------------------------------
+	//
+	// Setm_CardShort() only sets cards, so these entries (value "aa-set-<n>") are
+	// handled by the add-on: it equips each part in its slot, using the best own
+	// copy (refine + cards) where there is one. The set bonus is applied by the
+	// calculator once all parts are worn.
+
+	const EQUIP_SETS = [
+		{ name: "Goibne's Set", items: ["Goibne's Helm", "Goibne's Armor", "Goibne's Spaulders", "Goibne's Greaves"] },
+		{ name: "Morrigane's Set", items: ["Morrigane's Helm", "Morrigane's Manteau", "Morrigane's Belt", "Morrigane's Pendant"] },
+		{ name: "Valkyrian Set", items: ["Valkyrian Helm", "Valkyrian Armor", "Valkyrian Manteau", "Valkyrian Shoes"] },
+	];
+	const SET_PREFIX = "aa-set-";
+	const SLOT_FOR_TYPE = { 50: ["A_head1"], 51: ["A_head2"], 52: ["A_head3"], 60: ["A_body"], 61: ["A_left"], 62: ["A_shoulder"], 63: ["A_shoes"], 64: ["A_acces1", "A_acces2"] };
+
+	// [{ slot, variant }] for every part the current class can wear.
+	function setParts(set) {
+		const used = new Set();
+		const parts = [];
+		for (const itemName of set.items) {
+			const item = m_Item.find((i) => i[8] === itemName);
+			if (!item || woeHidesItem(item[0])) continue; // forbidden in pre-trans WoE (when that filter is on)
+			const key = (SLOT_FOR_TYPE[item[1]] || []).find((k) => !used.has(k) && el(k) && hasOption(el(k), item[0]));
+			if (!key) continue;
+			used.add(key);
+			const slot = SLOT_BY_KEY[key];
+			const best = state.settings.applyInstance ? evaluateOwned(slot, item[0]) : null;
+			parts.push({ slot, variant: variantFor(slot, item[0], best && best.inst) });
+		}
+		return parts;
+	}
+
+	// A set entry is pointless when the WoE filter removes all of its parts.
+	function equipSetHidden(set) {
+		return state.settings.woe && set.items.every((n) => {
+			const item = m_Item.find((i) => i[8] === n);
+			return !item || woeHidesItem(item[0]);
+		});
+	}
+
+	function applyEquipSet(index) {
+		const set = EQUIP_SETS[index];
+		if (!set) return;
+		applying = true; // exactly these copies
+		try {
+			for (const { slot, variant } of setParts(set)) applyVariant(slot, variant, true);
+		} finally {
+			applying = false;
+		}
+		invalidate();
+		refreshSelects();
+	}
+
+	(function addEquipSets() {
+		const select = el("A_cardshort");
+		if (!select) return;
+		EQUIP_SETS.forEach((set, i) => select.add(new Option(set.name, SET_PREFIX + i), 1 + i));
+	})();
+
+	// Picking a set entry must not reach the calculator's handler (it expects a number).
+	document.addEventListener(
+		"change",
+		(e) => {
+			const t = e.target;
+			if (t.form !== form || t.name !== "A_cardshort" || !String(t.value).startsWith(SET_PREFIX)) return;
+			e.stopImmediatePropagation();
+			const index = Number(t.value.slice(SET_PREFIX.length));
+			t.value = "0";
+			applyEquipSet(index);
+		},
+		true
+	);
+
+	// Damage values for shortcut rows: card shortcuts via the calculator's function,
+	// equipment sets by simulating all their parts at once.
+	function shortcutValues(field, rows) {
+		const out = new Array(rows.length);
+		const sets = [];
+		const cards = [];
+		rows.forEach((r, i) => (String(r.value).startsWith(SET_PREFIX) ? sets : cards).push(i));
+		const cv = simulateShortcut(field, cards.map((i) => rows[i].value));
+		cards.forEach((i, k) => (out[i] = cv[k]));
+		const variants = sets.map((i) => Object.assign({}, ...setParts(EQUIP_SETS[Number(String(rows[i].value).slice(SET_PREFIX.length))]).map((p) => p.variant)));
+		const sv = simulate(variants);
+		sets.forEach((i, k) => (out[i] = sv[k]));
+		return out;
+	}
+
+	// Damage for each shortcut value, running the calculator's own shortcut function.
+	function simulateShortcut(field, values) {
+		const apply = window[field.shortcut];
+		const keys = [field.key, ...CARD_FIELDS.map((d) => d.key)].filter((k) => el(k));
+		const snapshot = Object.fromEntries(keys.map((k) => [k, el(k).value]));
+		const restore = () => keys.forEach((k) => (el(k).value = snapshot[k]));
+		const results = [];
+		simulating = true;
+		try {
+			for (const v of values) {
+				restore();
+				el(field.key).value = v;
+				try {
+					if (typeof apply === "function") quietly(apply);
+					origCalc();
+					results.push(measure());
+				} catch (e) {
+					results.push(NaN);
+				}
+			}
+		} finally {
+			restore();
+			try {
+				origCalc();
+			} catch (e) {
+				/* nothing we can restore */
+			}
+			formObserver.takeRecords();
+			simulating = false;
+		}
+		return results;
+	}
+	const comboCache = new WeakMap(); // select -> { key, rows }
+	let comboOpen = null; // combo + { rows, shown, active } while the list is open
+
+	const dropdown = h("div", { class: "aa-cdrop", role: "listbox" });
+	dropdown.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the input
+	document.body.append(dropdown);
+
+	let comboSyncQueued = false;
+	function scheduleComboSync() {
+		if (comboSyncQueued) return;
+		comboSyncQueued = true;
+		setTimeout(() => {
+			comboSyncQueued = false;
+			if (simulating) return;
+			syncCombos();
+			updateSwapButton();
+		}, 0);
+	}
+
+	// Like norm(), but keeps text in brackets ("[4 Race Card]", "[1]") searchable.
+	function searchNorm(s) {
+		return String(s)
+			.toLowerCase()
+			.normalize("NFKD")
+			.replace(/[̀-ͯ]/g, "")
+			.replace(/['’`´]/g, "")
+			.replace(/[^a-z0-9]+/g, " ")
+			.trim();
+	}
+
+	function optionName(opt) {
+		return opt.dataset.aaOrig ?? opt.text;
+	}
+
+	// Text shown in the field for the current selection.
+	function currentLabel(slot, select) {
+		const opt = select.options[select.selectedIndex];
+		if (!opt) return "";
+		const none = isNoneOption(opt);
+		const refineSel = slot.refine && el(slot.refine);
+		const refine = refineSel && !none ? Number(refineSel.value) : 0;
+		// Only equipment slots can hold owned items; other fields' values are unrelated ids.
+		const owned = Boolean(SLOT_BY_KEY[slot.key]) && ownedById.has(Number(opt.value)) && !none;
+		return (owned ? "★ " : "") + (refine ? `+${refine} ` : "") + optionName(opt);
+	}
+
+	function syncCombos() {
+		const enabled = state.settings.combo;
+		for (const { slot, select } of comboSelects()) {
+			let c = combos.get(slot.key);
+			if (c && (c.select !== select || !c.wrap.isConnected)) {
+				c.wrap.remove();
+				combos.delete(slot.key);
+				c = null;
+			}
+			if (!enabled) {
+				select.classList.remove("aa-hidden-select");
+				continue;
+			}
+			if (!c) c = createCombo(slot, select);
+			// Mirror what the calculator does to the (hidden) select.
+			c.wrap.style.display = select.style.display === "none" ? "none" : "";
+			c.input.disabled = select.disabled;
+			const editing = document.activeElement === c.input || (comboOpen && comboOpen.input === c.input);
+			if (!editing) c.input.value = currentLabel(slot, select);
+			// The calculator sizes its selects in px or % of the cell; % must go on the wrapper.
+			const w = select.style.width && select.style.width !== "auto" ? select.style.width : c.width;
+			c.wrap.style.width = w.endsWith("%") ? w : "";
+			c.input.style.width = w.endsWith("%") ? "100%" : w;
+			// Leave room for the slot badge inside the field (0 while the section is hidden).
+			// "important" so it beats panel.css, which must override the calculator's field rules.
+			if (!c.badge) c.input.style.setProperty("padding-left", "6px", "important");
+			else if (c.badge.offsetWidth) c.input.style.setProperty("padding-left", c.badge.offsetWidth + 8 + "px", "important");
+			c.input.title = `${slot.label}: ${c.input.value}`;
+		}
+		if (!enabled) {
+			combos.forEach((c) => c.wrap.remove());
+			combos.clear();
+			closeCombo();
+		}
+		alignRightColumn();
+		alignCardColumn();
+	}
+
+	// The armor card selects are auto-sized to their longest card name, so the
+	// column came out ragged; give their search fields one common width.
+	function alignCardColumn() {
+		const fields = CARD_FIELDS.filter((d) => !d.key.startsWith("A_weapon")).map((d) => combos.get(d.key)).filter((c) => c && !c.wrap.style.width);
+		const width = Math.max(0, ...fields.map((c) => parseFloat(c.width) || 0));
+		if (width) fields.forEach((c) => (c.input.style.width = width + "px"));
+	}
+
+	// Rows without a refine select (middle/lower headgear, accessories) are indented
+	// by a fixed 49px in the calculator, which is only roughly the width of "+ [0]".
+	// Align their fields exactly with the rows that have a refine select.
+	const UNREFINED = ["A_head2", "A_head3", "A_acces1", "A_acces2"];
+	function alignRightColumn() {
+		const ref = combos.get("A_body") || combos.get("A_head1");
+		const refX = ref && ref.wrap.offsetParent ? ref.wrap.getBoundingClientRect().left : null;
+		for (const key of UNREFINED) {
+			const sel = el(key);
+			const td = sel && sel.closest("td");
+			if (!td) continue;
+			if (!("aaPad" in td.dataset)) td.dataset.aaPad = td.style.paddingLeft;
+			const c = combos.get(key);
+			if (refX == null || !c || !c.wrap.offsetParent) {
+				td.style.paddingLeft = td.dataset.aaPad; // back to the calculator's own indent
+				continue;
+			}
+			const delta = refX - c.wrap.getBoundingClientRect().left;
+			if (Math.abs(delta) > 0.5) td.style.paddingLeft = parseFloat(getComputedStyle(td).paddingLeft) + delta + "px";
+		}
+	}
+
+	function createCombo(slot, select) {
+		const width = Math.max(140, Math.round(select.getBoundingClientRect().width)) + "px";
+		const input = h("input", { type: "text", class: "aa-cinput", spellcheck: "false", autocomplete: "off", role: "combobox", "aria-expanded": "false", title: slot.label });
+		const badge = slot.short ? h("span", { class: "aa-cslot" }, slot.short) : null;
+		const wrap = h("span", { class: "aa-combo" }, badge, input, h("span", { class: "aa-ccaret" }, "▾"));
+		select.after(wrap);
+		select.classList.add("aa-hidden-select");
+		const c = { slot, select, input, wrap, width, badge };
+		combos.set(slot.key, c);
+
+		input.addEventListener("focus", () => {
+			if (comboOpen && comboOpen.input === input) return; // focus came back from the list header
+			input.select();
+			openCombo(c, "");
+		});
+		input.addEventListener("mousedown", () => {
+			if (document.activeElement === input && !comboOpen) openCombo(c, "");
+		});
+		input.addEventListener("input", () => {
+			if (!comboOpen) openCombo(c, input.value);
+			else filterCombo(input.value);
+		});
+		input.addEventListener("keydown", (e) => {
+			if (!comboOpen) {
+				if (e.key === "ArrowDown" || e.key === "Enter") {
+					openCombo(c, "");
+					e.preventDefault();
+				}
+				return;
+			}
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				moveActive(e.key === "ArrowDown" ? 1 : -1);
+				e.preventDefault();
+			} else if (e.key === "Enter") {
+				const row = comboOpen.shown[comboOpen.active];
+				if (row) pickRow(comboOpen, row);
+				e.preventDefault();
+			} else if (e.key === "Escape") {
+				closeCombo();
+				input.value = currentLabel(slot, select);
+				input.blur();
+				e.preventDefault();
+			}
+		});
+		input.addEventListener("blur", (e) => {
+			// Clicking a label in the list header moves focus to its checkbox: stay open.
+			if (e.relatedTarget && dropdown.contains(e.relatedTarget)) {
+				setTimeout(() => input.focus({ preventScroll: true }), 0);
+				return;
+			}
+			closeCombo();
+			input.value = currentLabel(slot, select);
+		});
+		return c;
+	}
+
+	// All choices of a slot with their damage value, cached per calculator state.
+	function comboRows(slot, select) {
+		const s = state.settings;
+		const key = [calcVersion, select.options.length, s.preview, s.metric, s.applyInstance, s.onlyOwned, s.woe, state.items.length].join("|");
+		const cached = comboCache.get(select);
+		if (cached && cached.key === key) return cached.rows;
+
+		const rows = [];
+		for (const opt of select.options) {
+			if (opt.hidden && !opt.selected) continue;
+			const id = Number(opt.value);
+			const name = optionName(opt);
+			const group = opt.parentElement && opt.parentElement.tagName === "OPTGROUP" ? opt.parentElement.label : "";
+			if (isNoneOption(opt)) {
+				rows.push({ kind: "none", value: opt.value, name, group: "", sub: "", owned: false });
+				continue;
+			}
+			const insts = SLOT_BY_KEY[slot.key] ? usableInstances(id) : null;
+			if (slot.monster) {
+				const info = monsterInfo(id);
+				rows.push({ kind: "plain", value: opt.value, id, name, group, owned: false, sub: info, subText: info.map((p) => p.text).join(" ") });
+			} else if (insts && insts.length && s.applyInstance) {
+				// One row per owned copy, evaluated with its own refine + cards.
+				for (const inst of insts) {
+					const sub = [instanceSummary({ ...inst, refine: 0 }) || "keine Karten", inst.location].filter(Boolean).join(" · ") + (inst.count > 1 ? ` · ×${inst.count}` : "");
+					rows.push({ kind: "inst", value: opt.value, id, inst, name: (inst.refine ? `+${inst.refine} ` : "") + name, group, owned: true, sub });
+				}
+			} else {
+				rows.push({ kind: "plain", value: opt.value, id, name, group, owned: Boolean(insts && insts.length), sub: "" });
+			}
+		}
+		for (const r of rows) {
+			r.search = " " + searchNorm([r.name, r.group, r.subText ?? r.sub].join(" "));
+			r.variant = r.kind === "inst" ? variantFor(slot, r.id, r.inst) : { [slot.key]: r.value };
+			r.current = slot.shortcut ? false : isCurrentVariant(r.variant);
+		}
+
+		if (s.preview !== "off" && !slot.listOnly) {
+			const base = baseline();
+			const sims = slot.shortcut ? rows.filter((r) => r.kind !== "none" && s.preview === "all") : rows.filter((r) => s.preview === "all" || r.owned || r.kind === "none");
+			const vals = slot.shortcut ? shortcutValues(slot, sims) : simulate(sims.map((r) => r.variant));
+			sims.forEach((r, i) => {
+				r.dmg = vals[i];
+				r.delta = r.current ? "" : formatDelta(r.dmg, base);
+				r.dir = Number.isFinite(r.dmg) ? Math.sign(Math.round((r.dmg - base) * 1000)) : 0;
+			});
+		}
+		comboCache.set(select, { key, rows });
+		return rows;
+	}
+
+	function isCurrentVariant(variant) {
+		return Object.entries(variant).every(([k, v]) => {
+			const sel = el(k);
+			return sel ? sel.value === v : v === "0";
+		});
+	}
+
+	function openCombo(c, query) {
+		const rows = comboRows(c.slot, c.select);
+		comboOpen = { ...c, rows, shown: [], active: 0 };
+		c.input.setAttribute("aria-expanded", "true");
+		filterCombo(query);
+		positionDropdown();
+		dropdown.classList.add("aa-open");
+	}
+
+	function closeCombo() {
+		if (!comboOpen) return;
+		comboOpen.input.setAttribute("aria-expanded", "false");
+		comboOpen = null;
+		dropdown.classList.remove("aa-open");
+		dropdown.replaceChildren();
+	}
+
+	const MAX_ROWS = 300;
+
+	function filterCombo(query) {
+		const o = comboOpen;
+		if (!o) return;
+		const q = searchNorm(query.replace(/^★\s*/, ""));
+		// Right after opening the field still shows the current item: no filter then.
+		const showAll = !q || q === searchNorm(currentLabel(o.slot, o.select).replace(/^★\s*/, ""));
+		const tokens = q.split(" ").filter(Boolean);
+		let shown = showAll ? o.rows.slice() : o.rows.filter((r) => tokens.every((t) => r.search.includes(" " + t)));
+		if (state.settings.comboSort === "dmg" && !o.slot.listOnly) {
+			shown.sort((a, b) => (b.kind === "none") - (a.kind === "none") || (Number.isFinite(b.dmg) ? b.dmg : -Infinity) - (Number.isFinite(a.dmg) ? a.dmg : -Infinity));
+		}
+		o.shown = shown;
+		const cur = shown.findIndex((r) => r.current);
+		o.active = showAll && cur >= 0 && cur < MAX_ROWS ? cur : 0;
+		renderDropdown();
+	}
+
+	function renderDropdown() {
+		const o = comboOpen;
+		const s = state.settings;
+		const setAndReopen = (k, v) => {
+			const q = o.input.value;
+			s[k] = v;
+			save();
+			if (k === "onlyOwned") {
+				invalidate();
+				refreshSelects();
+			}
+			const c = combos.get(o.slot.key);
+			closeCombo();
+			if (c) openCombo(c, q);
+		};
+		const head = h(
+			"div",
+			{ class: "aa-chead" },
+			h("span", { class: "aa-dim" }, h("strong", { class: "aa-cslotname" }, o.slot.label), ` · ${o.shown.length} Treffer`),
+			o.slot.card || o.slot.shortcut || o.slot.listOnly ? null : h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, disabled: !state.items.length, onchange: (e) => setAndReopen("onlyOwned", e.target.checked) }), " nur eigene"),
+			o.slot.listOnly ? null : h(
+				"button",
+				{ type: "button", class: "aa-btn aa-small", title: "Sortierung umschalten", onclick: () => setAndReopen("comboSort", s.comboSort === "dmg" ? "name" : "dmg") },
+				s.comboSort === "dmg" ? "Sortiert: Schaden" : "Sortiert: Name"
+			)
+		);
+		const list = h(
+			"div",
+			{ class: "aa-clist" },
+			o.shown.slice(0, MAX_ROWS).map((r, i) =>
+				h(
+					"div",
+					{
+						class: "aa-crow" + (i === o.active ? " aa-active" : "") + (r.current ? " aa-current" : ""),
+						role: "option",
+						"data-i": String(i),
+						onmousedown: (e) => {
+							if (e.button === 0) pickRow(o, r);
+						},
+						onmousemove: () => setActive(i, false),
+					},
+					h("span", { class: "aa-cstar" }, r.owned ? "★" : ""),
+					h("div", { class: "aa-cmain" }, h("div", { class: "aa-cname" }, r.name, r.group ? h("span", { class: "aa-ctag" }, r.group) : null), r.sub && r.sub.length ? h("div", { class: "aa-dim" }, renderSub(r.sub)) : null),
+					h("span", { class: "aa-cdelta " + (r.dir > 0 ? "aa-up" : r.dir < 0 ? "aa-down" : "") }, r.current ? "aktuell" : r.delta || "")
+				)
+			),
+			o.shown.length > MAX_ROWS ? h("div", { class: "aa-crow aa-dim" }, `… ${o.shown.length - MAX_ROWS} weitere – Suche verfeinern`) : null,
+			o.shown.length === 0 ? h("div", { class: "aa-crow aa-dim" }, "Keine Treffer") : null
+		);
+		dropdown.replaceChildren(head, list);
+		scrollActiveIntoView();
+	}
+
+	function setActive(i, scroll) {
+		const o = comboOpen;
+		if (!o || i === o.active) return;
+		const rows = dropdown.querySelectorAll(".aa-crow[data-i]");
+		if (rows[o.active]) rows[o.active].classList.remove("aa-active");
+		o.active = i;
+		if (rows[i]) rows[i].classList.add("aa-active");
+		if (scroll) scrollActiveIntoView();
+	}
+
+	function moveActive(step) {
+		const o = comboOpen;
+		const n = Math.min(o.shown.length, MAX_ROWS);
+		if (n) setActive((o.active + step + n) % n, true);
+	}
+
+	function scrollActiveIntoView() {
+		const row = dropdown.querySelector(".aa-crow.aa-active");
+		const list = dropdown.querySelector(".aa-clist");
+		if (!row || !list) return;
+		if (row.offsetTop < list.scrollTop) list.scrollTop = row.offsetTop;
+		else if (row.offsetTop + row.offsetHeight > list.scrollTop + list.clientHeight) list.scrollTop = row.offsetTop + row.offsetHeight - list.clientHeight;
+	}
+
+	function positionDropdown() {
+		if (!comboOpen) return;
+		const r = comboOpen.input.getBoundingClientRect();
+		const width = Math.min(window.innerWidth - 16, Math.max(r.width, 440));
+		const left = Math.max(8, Math.min(r.left, window.innerWidth - width - 8));
+		const below = window.innerHeight - r.bottom - 8;
+		const above = r.top - 8;
+		const openUp = below < 240 && above > below;
+		const maxH = Math.max(160, Math.min(420, openUp ? above : below));
+		Object.assign(dropdown.style, {
+			left: left + "px",
+			width: width + "px",
+			maxHeight: maxH + "px",
+			top: openUp ? "" : r.bottom + 2 + "px",
+			bottom: openUp ? window.innerHeight - r.top + 2 + "px" : "",
+		});
+	}
+	window.addEventListener("resize", () => {
+		positionDropdown();
+		alignRightColumn();
+	});
+	window.addEventListener(
+		"scroll",
+		(e) => {
+			if (!dropdown.contains(e.target)) positionDropdown();
+		},
+		true
+	);
+
+	function pickRow(o, row) {
+		const { slot, select, input } = o;
+		closeCombo();
+		if (row.kind === "inst") {
+			applying = true; // exactly this copy, not the "best" one
+			try {
+				applyVariant(slot, row.variant, true);
+			} finally {
+				applying = false;
+			}
+		} else if (select.value !== row.value || slot.shortcut) {
+			select.value = row.value;
+			select.dispatchEvent(new Event("change", { bubbles: true }));
+		}
+		refreshSelects();
+		input.value = currentLabel(slot, select);
+		input.blur();
+	}
+
+	// ---------------------------------------------------------------------------
+	// Panel UI
+	// ---------------------------------------------------------------------------
+
+	function h(tag, attrs, ...children) {
+		const node = document.createElement(tag);
+		for (const [k, v] of Object.entries(attrs || {})) {
+			if (k === "class") node.className = v;
+			else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+			else if (v === true) node.setAttribute(k, "");
+			else if (v !== false && v != null) node.setAttribute(k, v);
+		}
+		for (const c of children.flat(Infinity)) {
+			if (c == null || c === false) continue;
+			node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+		}
+		return node;
+	}
+
+	const ui = { tab: "import", compare: null, lastImport: null, inbox: null, scroll: {}, renderedTab: null };
+
+	function applyImport(res, replace) {
+		state.items = replace ? res.items : dedupe([...state.items, ...res.items]);
+		state.unmatched = res.unmatched;
+		ui.lastImport = { found: res.items.length, skipped: res.unmatched.length };
+		rebuildOwned();
+		save();
+		invalidate();
+		refreshSelects();
+		ui.tab = "items";
+		renderPanel();
+	}
+
+	function clearInbox() {
+		ui.inbox = null;
+		window.postMessage({ aa: "toBridge", type: "clearInbox" }, window.location.origin);
+	}
+
+	// List sent from the control panel item page (cp.js).
+	function renderInbox() {
+		if (!ui.inbox) return null;
+		const { entries, source, at } = ui.inbox;
+		const when = at ? new Date(at).toLocaleString() : "";
+		const take = (replace) => {
+			const res = resolveEntries(entries);
+			clearInbox();
+			applyImport(res, replace);
+		};
+		return h(
+			"div",
+			{ class: "aa-inbox" },
+			h("strong", null, `Neue Liste vom ${source || "Control Panel"}`),
+			h("div", { class: "aa-dim" }, `${entries.length} Einträge${when ? " · " + when : ""}`),
+			h(
+				"div",
+				{ class: "aa-row" },
+				h("button", { type: "button", class: "aa-btn aa-primary", onclick: () => take(true) }, "Ersetzen"),
+				h("button", { type: "button", class: "aa-btn", onclick: () => take(false) }, "Hinzufügen"),
+				h("button", { type: "button", class: "aa-btn", onclick: () => (clearInbox(), renderPanel()) }, "Verwerfen")
+			)
+		);
+	}
+
+	const toggleBtn = h("button", { class: "aa-toggle", type: "button", title: "Arcadia Armory", onclick: () => panel.classList.toggle("aa-open") }, "⚔ Armory");
+	const panel = h("div", { class: "aa-panel" });
+	document.body.append(toggleBtn, panel);
+
+	function renderPanel() {
+		// Rebuilding the panel would reset its scroll position; keep it per tab.
+		const oldBody = panel.querySelector(".aa-body");
+		if (oldBody && ui.renderedTab) ui.scroll[ui.renderedTab] = oldBody.scrollTop;
+		panel.replaceChildren(
+			h(
+				"div",
+				{ class: "aa-head" },
+				h("strong", null, "Arcadia Armory"),
+				h("span", { class: "aa-count" }, `${state.items.length} Exemplare`),
+				h("button", { type: "button", class: "aa-x", title: "Schließen", onclick: () => panel.classList.remove("aa-open") }, "×")
+			),
+			h(
+				"div",
+				{ class: "aa-tabs" },
+				tabBtn("import", "Import"),
+				tabBtn("items", "Meine Items"),
+				tabBtn("compare", "Vergleich")
+			),
+			renderInbox() || "",
+			h("div", { class: "aa-body" }, ui.tab === "import" ? renderImport() : ui.tab === "items" ? renderItems() : renderCompare())
+		);
+		ui.renderedTab = ui.tab;
+		panel.querySelector(".aa-body").scrollTop = ui.scroll[ui.tab] || 0;
+	}
+
+	// Collapsible category; the collapsed state is stored with the settings.
+	function isCollapsed(key) {
+		return (state.settings.collapsed || []).includes(key);
+	}
+
+	function setCollapsed(keys, collapsed) {
+		const set = new Set(state.settings.collapsed || []);
+		keys.forEach((k) => (collapsed ? set.add(k) : set.delete(k)));
+		state.settings.collapsed = [...set];
+		save();
+		renderPanel();
+	}
+
+	function groupBlock(key, title, count, renderItemsFn) {
+		const collapsed = isCollapsed(key);
+		return h(
+			"div",
+			{ class: "aa-group" + (collapsed ? " aa-collapsed" : "") },
+			h(
+				"button",
+				{ type: "button", class: "aa-gtitle", "aria-expanded": String(!collapsed), onclick: () => setCollapsed([key], !collapsed) },
+				h("span", { class: "aa-caret" }, collapsed ? "▸" : "▾"),
+				title,
+				h("span", { class: "aa-gcount" }, String(count))
+			),
+			collapsed ? null : renderItemsFn()
+		);
+	}
+
+	function groupToolbar(keys) {
+		if (keys.length < 2) return null;
+		return h(
+			"div",
+			{ class: "aa-row aa-gtools" },
+			h("button", { type: "button", class: "aa-btn aa-small", onclick: () => setCollapsed(keys, false) }, "Alle aufklappen"),
+			h("button", { type: "button", class: "aa-btn aa-small", onclick: () => setCollapsed(keys, true) }, "Alle zuklappen")
+		);
+	}
+
+	function tabBtn(id, label) {
+		return h("button", { type: "button", class: "aa-tab" + (ui.tab === id ? " aa-active" : ""), onclick: () => ((ui.tab = id), renderPanel()) }, label);
+	}
+
+	function renderImport() {
+		const ta = h("textarea", { class: "aa-ta", placeholder: "Item-Liste hier einfügen (z. B. aus der Item-Suche im Control Panel) …", spellcheck: "false" });
+		const run = (replace) => applyImport(parseList(ta.value), replace);
+		return [
+			ta,
+			h(
+				"div",
+				{ class: "aa-row" },
+				h("button", { type: "button", class: "aa-btn aa-primary", onclick: () => run(true) }, "Importieren (ersetzen)"),
+				h("button", { type: "button", class: "aa-btn", onclick: () => run(false) }, "Hinzufügen")
+			),
+			h("p", { class: "aa-hint" }, "Waffen und Ausrüstung werden erkannt und gespeichert, alles andere wird übersprungen. Verfeinerung und Karten pro Exemplar werden übernommen."),
+			h("p", { class: "aa-hint" }, "Bequemer: Im Control Panel unter „My Master Account Item List“ auf „⚔ Ausrüstung an Arcadia Armory senden“ klicken."),
+			state.unmatched.length
+				? h("details", { class: "aa-details" }, h("summary", null, `${state.unmatched.length} Einträge beim letzten Import übersprungen`), h("ul", null, state.unmatched.map((u) => h("li", null, u))))
+				: null,
+		];
+	}
+
+	function settingsBlock() {
+		const s = state.settings;
+		const set = (k, v) => {
+			s[k] = v;
+			save();
+			invalidate();
+			slotSelects().forEach(({ select }) => clearAnnotations(select));
+			refreshSelects();
+			renderPanel();
+		};
+		return h(
+			"div",
+			{ class: "aa-settings" },
+			h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, onchange: (e) => set("onlyOwned", e.target.checked) }), " Nur eigene Items in der Auswahl"),
+			h("label", null, h("input", { type: "checkbox", checked: s.applyInstance, onchange: (e) => set("applyInstance", e.target.checked) }), " Verfeinerung + Karten eigener Items übernehmen"),
+			h("label", null, h("input", { type: "checkbox", checked: s.combo, onchange: (e) => set("combo", e.target.checked) }), " Suchfeld statt Auswahlliste"),
+			h(
+				"label",
+				{ title: `Blendet die ${WOE_LIST.length} in Pre-trans WoE verbotenen Items und Karten aus (Liste von Arcadia, Stand ${WOE_AS_OF}).` },
+				h("input", { type: "checkbox", checked: s.woe, onchange: (e) => set("woe", e.target.checked) }),
+				" Pre-trans WoE: verbotene Items ausblenden"
+			),
+			h(
+				"label",
+				null,
+				"Schadensvorschau: ",
+				h(
+					"select",
+					{ onchange: (e) => set("preview", e.target.value) },
+					h("option", { value: "all", selected: s.preview === "all" }, "alle Items"),
+					h("option", { value: "owned", selected: s.preview === "owned" }, "nur eigene"),
+					h("option", { value: "off", selected: s.preview === "off" }, "aus")
+				)
+			),
+			h(
+				"label",
+				null,
+				"Maßstab: ",
+				h(
+					"select",
+					{ onchange: (e) => set("metric", e.target.value) },
+					h("option", { value: "dps", selected: s.metric === "dps" }, "Ø Schaden / Sekunde"),
+					h("option", { value: "hit", selected: s.metric === "hit" }, "Ø Schaden / Treffer")
+				)
+			)
+		);
+	}
+
+	function renderItems() {
+		const ORDER = ["Weapon", "Upper Headgear", "Middle Headgear", "Lower Headgear", "Armor", "Shield", "Garment", "Footgear", "Accessory"];
+		const groups = new Map(ORDER.map((g) => [g, []]));
+		for (const it of state.items) {
+			const g = typeLabel(m_Item[it.calcId] ? m_Item[it.calcId][1] : 0);
+			if (!groups.has(g)) groups.set(g, []);
+			groups.get(g).push(it);
+		}
+		for (const [g, items] of groups) {
+			if (!items.length) groups.delete(g);
+			else items.sort((a, b) => a.name.localeCompare(b.name) || b.refine - a.refine);
+		}
+		const remove = (uid) => {
+			state.items = state.items.filter((i) => i.uid !== uid);
+			rebuildOwned();
+			save();
+			invalidate();
+			refreshSelects();
+			renderPanel();
+		};
+		return [
+			ui.lastImport ? h("p", { class: "aa-ok" }, `${ui.lastImport.found} Ausrüstungs-Exemplare erkannt, ${ui.lastImport.skipped} übersprungen.`) : null,
+			settingsBlock(),
+			state.items.length === 0 ? h("p", { class: "aa-hint" }, "Noch nichts importiert.") : null,
+			groupToolbar([...groups.keys()].map((g) => "items:" + g)),
+			[...groups].map(([g, items]) =>
+				groupBlock("items:" + g, g, items.length, () =>
+					items.map((it) =>
+						h(
+							"div",
+							{ class: "aa-item" },
+							h(
+								"div",
+								{ class: "aa-iname" },
+								(it.refine ? `+${it.refine} ` : "") + it.name,
+								it.count > 1 ? h("span", { class: "aa-dim" }, ` ×${it.count}`) : null,
+								h("div", { class: "aa-dim" }, [instanceSummary({ ...it, refine: 0 }) || "keine Karten", it.unknownCards.length ? ` · unbekannt: ${it.unknownCards.join(", ")}` : "", it.flags && it.flags.length ? ` · ${it.flags.join(", ")}` : "", woeBlockedInstance(it) ? " · WoE-verboten" : "", it.location ? ` · ${it.location}` : ""].join(""))
+							),
+							h("button", { type: "button", class: "aa-x", title: "Entfernen", onclick: () => remove(it.uid) }, "×")
+						)
+					)
+				)
+			),
+			state.items.length
+				? h(
+						"button",
+						{
+							type: "button",
+							class: "aa-btn aa-danger",
+							onclick: () => {
+								if (!confirm("Alle importierten Items löschen?")) return;
+								state.items = [];
+								state.unmatched = [];
+								rebuildOwned();
+								save();
+								invalidate();
+								refreshSelects();
+								renderPanel();
+							},
+						},
+						"Alle löschen"
+				  )
+				: null,
+		];
+	}
+
+	function computeCompare() {
+		const base = baseline();
+		const rows = [];
+		const notEquippable = new Set(state.items.filter((i) => !(state.settings.woe && woeBlockedInstance(i))).map((i) => i.uid));
+		for (const { slot, select } of slotSelects()) {
+			const entries = [];
+			for (const calcId of ownedById.keys()) {
+				const insts = usableInstances(calcId);
+				if (!insts.length || !hasOption(select, calcId)) continue;
+				const variants = insts.map((inst) => variantFor(slot, calcId, inst));
+				const vals = simulate(variants);
+				insts.forEach((inst, i) => {
+					notEquippable.delete(inst.uid);
+					const current = Object.entries(variants[i]).every(([k, v]) => el(k) && el(k).value === v);
+					entries.push({ inst, value: vals[i], current });
+				});
+			}
+			entries.sort((a, b) => b.value - a.value);
+			if (entries.length) rows.push({ slot, base, entries });
+		}
+		ui.compare = { rows, base, notEquippable: state.items.filter((i) => notEquippable.has(i.uid)), version: calcVersion };
+	}
+
+	function renderCompare() {
+		if (ui.compare && ui.compare.version !== calcVersion) ui.compare.stale = true;
+		const c = ui.compare;
+		return [
+			h("p", { class: "aa-hint" }, "Simuliert jedes eigene Exemplar im passenden Slot mit dem aktuellen Charakter, Skill und Monster."),
+			h("button", { type: "button", class: "aa-btn aa-primary", onclick: () => (computeCompare(), renderPanel()) }, c ? "Neu berechnen" : "Berechnen"),
+			c && c.stale ? h("p", { class: "aa-warn" }, "Der Charakter wurde seitdem geändert – neu berechnen für aktuelle Werte.") : null,
+			c
+				? h(
+						"div",
+						null,
+						h("p", { class: "aa-dim" }, `Aktuell: ${c.base.toFixed(2)} ${state.settings.metric === "dps" ? "Schaden/Sek." : "Schaden/Treffer"}`),
+						groupToolbar(c.rows.map((row) => "compare:" + row.slot.key)),
+						c.rows.map((row) =>
+							groupBlock("compare:" + row.slot.key, row.slot.label, row.entries.length, () =>
+								row.entries.map((e) =>
+									h(
+										"div",
+										{ class: "aa-item" + (e.current ? " aa-current" : "") },
+										h("span", { class: "aa-delta " + (e.value > row.base ? "aa-up" : e.value < row.base ? "aa-down" : "") }, formatDelta(e.value, row.base)),
+										h("div", { class: "aa-iname" }, (e.inst.refine ? `+${e.inst.refine} ` : "") + e.inst.name, h("div", { class: "aa-dim" }, instanceSummary({ ...e.inst, refine: 0 }) || "keine Karten")),
+										h(
+											"button",
+											{
+												type: "button",
+												class: "aa-btn aa-small",
+												onclick: () => {
+													const v = variantFor(row.slot, e.inst.calcId, e.inst);
+													applying = true; // keep the change listener from picking another instance
+													try {
+														applyVariant(row.slot, v, true);
+													} finally {
+														applying = false;
+													}
+													computeCompare();
+													renderPanel();
+												},
+											},
+											"Anlegen"
+										)
+									)
+								)
+							)
+						),
+						c.notEquippable.length
+							? h("details", { class: "aa-details" }, h("summary", null, `${c.notEquippable.length} Exemplare für die aktuelle Klasse nicht ausrüstbar`), h("ul", null, c.notEquippable.map((i) => h("li", null, i.name))))
+							: null
+				  )
+				: null,
+		];
+	}
+
+	// ---------------------------------------------------------------------------
+	// "Armory" theme in the calculator's theme select
+	// ---------------------------------------------------------------------------
+	//
+	// The select is driven by the <dark-mode-toggle> component, which only knows
+	// system/dark/light. "Armory" switches it to dark and adds a grayscale layer
+	// on top (theme-armory.css, scoped to html.aa-theme-armory).
+
+	const themeSelect = document.getElementById("theme");
+	const darkToggle = document.querySelector("dark-mode-toggle");
+	if (themeSelect && !themeSelect.querySelector('option[value="armory"]')) themeSelect.append(new Option("Armory", "armory"));
+	let appliedTheme = null;
+
+	function applyTheme(theme) {
+		const armory = theme === "armory";
+		document.documentElement.classList.toggle("aa-theme-armory", armory);
+		if (!armory || appliedTheme === theme) {
+			appliedTheme = theme;
+			return;
+		}
+		appliedTheme = theme;
+		if (darkToggle) {
+			try {
+				darkToggle.permanent = true;
+				darkToggle.mode = "dark";
+			} catch (e) {
+				/* component not ready; the grayscale layer still applies */
+			}
+		}
+		if (themeSelect) themeSelect.value = "armory";
+	}
+
+	document.addEventListener(
+		"change",
+		(e) => {
+			if (!themeSelect || e.target !== themeSelect) return;
+			if (themeSelect.value === "armory") {
+				e.stopImmediatePropagation(); // the component would reject the unknown mode
+				state.settings.theme = "armory";
+				save();
+				applyTheme("armory");
+			} else {
+				state.settings.theme = themeSelect.value;
+				save();
+				applyTheme(themeSelect.value);
+			}
+		},
+		true
+	);
+	// The component resets the select to dark/light/system whenever it updates.
+	document.addEventListener("colorschemechange", () => {
+		if (themeSelect && state.settings.theme === "armory") themeSelect.value = "armory";
+	});
+
+	renderPanel();
+	window.postMessage({ aa: "toBridge", type: "load" }, window.location.origin);
+})();

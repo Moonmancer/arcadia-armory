@@ -1,0 +1,316 @@
+.aa-toggle {
+	position: fixed;
+	right: 16px;
+	bottom: 16px;
+	z-index: 2147483000;
+	padding: 8px 14px;
+	border: 1px solid #e6c46a;
+	border-radius: 20px;
+	background: #2b2360;
+	color: #fff;
+	font: bold 13px/1 sans-serif;
+	cursor: pointer;
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+.aa-toggle:hover { background: #3b3180; }
+
+.aa-panel {
+	position: fixed;
+	top: 16px;
+	right: 16px;
+	bottom: 60px;
+	z-index: 2147483001;
+	width: 380px;
+	max-width: calc(100vw - 32px);
+	display: none;
+	flex-direction: column;
+	border: 1px solid #e6c46a;
+	border-radius: 10px;
+	background: #1d1842;
+	color: #e8e6f5;
+	font: 13px/1.4 sans-serif;
+	box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+	overflow: hidden;
+}
+.aa-panel.aa-open { display: flex; }
+.aa-panel * { box-sizing: border-box; }
+
+.aa-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 10px 12px;
+	background: #2b2360;
+}
+.aa-head strong { color: #e6c46a; font-size: 15px; }
+.aa-count { flex: 1; color: #aaa4d6; font-size: 12px; }
+
+.aa-tabs { display: flex; border-bottom: 1px solid #3b3180; }
+.aa-tab {
+	flex: 1;
+	padding: 8px;
+	border: 0;
+	background: transparent;
+	color: #aaa4d6;
+	cursor: pointer;
+	font: inherit;
+}
+.aa-tab.aa-active { color: #fff; box-shadow: inset 0 -2px 0 #e6c46a; }
+
+.aa-body { flex: 1; overflow-y: auto; padding: 12px; }
+.aa-body p { margin: 8px 0; }
+
+.aa-ta {
+	width: 100%;
+	height: 220px;
+	resize: vertical;
+	padding: 8px;
+	border: 1px solid #3b3180;
+	border-radius: 6px;
+	background: #120f2c;
+	color: #e8e6f5;
+	font: 12px/1.3 monospace;
+}
+
+.aa-row { display: flex; gap: 8px; margin-top: 8px; }
+.aa-btn {
+	padding: 6px 10px;
+	border: 1px solid #5a4fb0;
+	border-radius: 6px;
+	background: #2b2360;
+	color: #fff;
+	cursor: pointer;
+	font: inherit;
+}
+.aa-btn:hover { background: #3b3180; }
+.aa-primary { background: #6b5bd6; border-color: #6b5bd6; }
+.aa-primary:hover { background: #7d6fe0; }
+.aa-danger { margin-top: 12px; border-color: #a04848; }
+.aa-small { padding: 3px 8px; font-size: 12px; }
+
+.aa-x {
+	border: 0;
+	background: transparent;
+	color: #aaa4d6;
+	font-size: 18px;
+	line-height: 1;
+	cursor: pointer;
+}
+.aa-x:hover { color: #fff; }
+
+.aa-hint, .aa-dim { color: #aaa4d6; font-size: 12px; }
+.aa-ok { color: #8fd694; }
+.aa-warn { color: #e6c46a; }
+
+.aa-settings {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding: 8px;
+	margin-bottom: 10px;
+	border: 1px solid #3b3180;
+	border-radius: 6px;
+}
+.aa-settings select { background: #120f2c; color: #e8e6f5; border: 1px solid #3b3180; }
+
+.aa-group { margin-top: 10px; }
+.aa-gtitle {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	margin-bottom: 4px;
+	padding: 4px 2px;
+	border: 0;
+	border-bottom: 1px solid #3b3180;
+	background: transparent;
+	color: #e6c46a;
+	font: bold 11px/1.4 sans-serif;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	text-align: left;
+	cursor: pointer;
+}
+.aa-gtitle:hover { color: #fff; }
+.aa-caret { width: 10px; }
+.aa-gcount {
+	margin-left: auto;
+	padding: 0 6px;
+	border-radius: 8px;
+	background: #3b3180;
+	color: #e8e6f5;
+	font-weight: normal;
+	letter-spacing: 0;
+}
+.aa-collapsed .aa-gtitle { margin-bottom: 0; }
+.aa-gtools { margin-top: 10px; }
+.aa-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	padding: 5px 6px;
+	border-radius: 5px;
+}
+.aa-item:nth-child(even) { background: rgba(255, 255, 255, 0.03); }
+.aa-item.aa-current { outline: 1px solid #6b5bd6; }
+.aa-iname { flex: 1; min-width: 0; }
+.aa-delta { width: 72px; flex: none; font-variant-numeric: tabular-nums; }
+.aa-up { color: #8fd694; }
+.aa-down { color: #e88; }
+
+.aa-details { margin-top: 10px; color: #aaa4d6; }
+.aa-details ul { margin: 4px 0; padding-left: 18px; }
+
+.aa-swap {
+	margin-left: 4px;
+	padding: 0 6px;
+	border: 1px solid #e6c46a;
+	border-radius: 4px;
+	background: #2b2360;
+	color: #fff;
+	font: bold 13px/18px sans-serif;
+	cursor: pointer;
+	vertical-align: middle;
+}
+.aa-swap:hover:not(:disabled) { background: #3b3180; }
+.aa-swap:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.aa-inbox {
+	margin: 10px 12px 0;
+	padding: 10px;
+	border: 1px solid #e6c46a;
+	border-radius: 8px;
+	background: #2b2360;
+}
+.aa-inbox strong { color: #e6c46a; }
+
+/* Search field replacing the equipment selects */
+.aa-hidden-select { display: none !important; }
+.aa-combo { position: relative; display: inline-block; vertical-align: middle; max-width: 100%; }
+/* Stronger than the calculator's own field rules (e.g. ".subheader2 input" in the
+   side bar sets a light background, no border and centered text with !important). */
+.aa-combo > input.aa-cinput {
+	box-sizing: border-box;
+	max-width: 100%;
+	margin: 0 !important;
+	padding: 1px 18px 1px 4px !important;
+	border: 1px solid #5a4fb0 !important;
+	border-radius: 8px !important;
+	background: #120f2c !important;
+	color: #e8e6f5 !important;
+	font: 12px/1.4 sans-serif;
+	letter-spacing: normal;
+	text-align: left !important;
+	text-overflow: ellipsis;
+}
+.aa-cinput:focus { outline: 1px solid #e6c46a; }
+.aa-ccaret {
+	position: absolute;
+	right: 5px;
+	top: 50%;
+	transform: translateY(-50%);
+	color: #aaa4d6;
+	font-size: 10px;
+	pointer-events: none;
+}
+
+.aa-cdrop {
+	position: fixed;
+	z-index: 2147483002;
+	display: none;
+	flex-direction: column;
+	border: 1px solid #e6c46a;
+	border-radius: 8px;
+	background: #1d1842;
+	color: #e8e6f5;
+	font: 12px/1.35 sans-serif;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+	overflow: hidden;
+}
+.aa-cdrop.aa-open { display: flex; }
+.aa-chead {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 6px 8px;
+	background: #2b2360;
+	border-bottom: 1px solid #3b3180;
+}
+.aa-chead > .aa-dim { flex: 1; }
+.aa-chead label { display: flex; align-items: center; gap: 3px; cursor: pointer; }
+.aa-clist { overflow-y: auto; }
+.aa-crow {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	padding: 4px 8px;
+	cursor: pointer;
+}
+.aa-crow.aa-active { background: #3b3180; }
+.aa-crow.aa-current { box-shadow: inset 3px 0 0 #6b5bd6; }
+.aa-cstar { width: 12px; flex: none; color: #e6c46a; }
+.aa-cmain { flex: 1; min-width: 0; }
+.aa-cname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aa-ctag {
+	margin-left: 6px;
+	padding: 0 5px;
+	border-radius: 6px;
+	background: #2b2360;
+	color: #aaa4d6;
+	font-size: 10px;
+}
+.aa-cdelta { flex: none; min-width: 64px; text-align: right; font-variant-numeric: tabular-nums; }
+.aa-crow.aa-current .aa-cdelta { color: #aaa4d6; }
+.aa-cslot {
+	position: absolute;
+	left: 3px;
+	top: 50%;
+	transform: translateY(-50%);
+	padding: 0 4px;
+	border-radius: 5px;
+	background: #3b3180;
+	color: #e6c46a;
+	font: bold 9px/14px sans-serif;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	pointer-events: none;
+	white-space: nowrap;
+}
+.aa-cinput { padding-left: 52px; }
+.aa-cslotname { color: #e6c46a; }
+
+/* Equipment block: weapon, left hand and the right-hand slot column are three
+   separate tables with 9 rows each; give every row the same height so they line
+   up as one grid (labels, the swap button and search fields differ in height). */
+tr.tequip > td > table > tbody > tr > td {
+	height: 25px;
+	padding-top: 0;
+	padding-bottom: 0;
+	vertical-align: middle;
+}
+.aa-swap { line-height: 16px; }
+.aa-cinput:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* Race / element names in the monster search (same palette as the Armory theme). */
+.aa-cdrop .eleNeutral { color: #c2b29a; }
+.aa-cdrop .eleWater { color: #5b9bff; }
+.aa-cdrop .eleEarth { color: #c98a4f; }
+.aa-cdrop .eleFire { color: #ff5a4f; }
+.aa-cdrop .eleWind { color: #44d46e; }
+.aa-cdrop .elePoison { color: #d466d4; }
+.aa-cdrop .eleHoly { color: #e8da50; }
+.aa-cdrop .eleShadow { color: #9a78f0; }
+.aa-cdrop .eleGhost { color: #dcdbd8; }
+.aa-cdrop .eleUndead { color: #b877dc; }
+.aa-cdrop .RaceFormless { color: #a8a8a8; }
+.aa-cdrop .RaceUndead { color: #b877dc; }
+.aa-cdrop .RaceBrute { color: #c98a4f; }
+.aa-cdrop .RacePlant { color: #4fe04f; }
+.aa-cdrop .RaceInsect { color: #5cbf5c; }
+.aa-cdrop .RaceFish { color: #5b9bff; }
+.aa-cdrop .RaceDemon { color: #a69bc2; }
+.aa-cdrop .RaceDemihuman { color: #ffa640; }
+.aa-cdrop .RaceAngel { color: #e3e35f; }
+.aa-cdrop .RaceDragon { color: #ff5a4f; }
+.aa-cdrop [class^="ele"], .aa-cdrop [class^="Race"] { font-weight: normal !important; }
+.aa-swapdelta { margin-left: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }

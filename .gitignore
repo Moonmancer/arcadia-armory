@@ -1,0 +1,15 @@
+# gespeicherte Seiten zum Abgleich (enthalten echte Accountdaten)
+samples/
+
+# von package.py erzeugt
+build/
+arcadia-armory.xpi
+
+# von release.py erzeugt (enthaelt die signierten Fassungen)
+dist/
+
+# von web-ext erzeugt
+web-ext-artifacts/
+node_modules/
+
+__pycache__/

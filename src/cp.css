@@ -1,0 +1,19 @@
+.aa-cp-bar {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 10px;
+	margin: 10px 0;
+}
+.aa-cp-btn {
+	padding: 8px 14px;
+	border: 1px solid #e6c46a;
+	border-radius: 20px;
+	background: #2b2360;
+	color: #fff;
+	font: bold 13px/1 sans-serif;
+	cursor: pointer;
+}
+.aa-cp-btn:hover:not(:disabled) { background: #3b3180; }
+.aa-cp-btn:disabled { opacity: 0.6; cursor: wait; }
+.aa-cp-status { font-size: 13px; }
