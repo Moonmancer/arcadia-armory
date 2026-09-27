@@ -1,9 +1,10 @@
 # gespeicherte Seiten zum Abgleich (enthalten echte Accountdaten)
 samples/
 
-# von package.py erzeugt
+# von package.py erzeugt bzw. von AMO heruntergeladen
 build/
-arcadia-armory.xpi
+*.xpi
+*.zip
 
 # von release.py erzeugt (enthaelt die signierten Fassungen)
 dist/
