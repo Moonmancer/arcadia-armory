@@ -1344,8 +1344,22 @@
 	// changes the whole character or target, so a delta would say nothing).
 	const MONSTER_FIELD = { key: "B_Enemy", label: "Monster", short: "", monster: true, listOnly: true, refine: null, cards: [] };
 	const JOB_FIELD = { key: "A_JOB", label: "Class", short: "", listOnly: true, refine: null, cards: [] };
-	// Other names of classes (e.g. from other servers), searchable in the class field.
-	const JOB_ALIASES = { Scholar: ["Professor"], Minstrel: ["Clown"], Biochemist: ["Creator"], Whitesmith: ["Mastersmith"] };
+	// Other names of classes (e.g. from other servers) and common shorthands,
+	// searchable in the class field and the build search.
+	const JOB_ALIASES = {
+		Novice: ["Novi"],
+		"Super Novice": ["SN"],
+		"Star Gladiator": ["TKM"],
+		"Lord Knight": ["LK"],
+		Blacksmith: ["BS"],
+		Whitesmith: ["Mastersmith", "WS"],
+		"High Priest": ["HP"],
+		"High Wizard": ["HW"],
+		"Assassin Cross": ["Sinx"],
+		Scholar: ["Professor"],
+		Minstrel: ["Clown"],
+		Biochemist: ["Creator"],
+	};
 	// Created by the calculator only once "Additional Effects" is opened. Pets are
 	// never owned items, so every row gets its damage change (few entries).
 	const PET_FIELD = { key: "A8_Skill0", label: "Pet", short: "", noOwned: true, refine: null, cards: [] };
