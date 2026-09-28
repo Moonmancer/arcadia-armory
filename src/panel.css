@@ -444,4 +444,7 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbshare .aa-pbbar { position: absolute; left: 0; top: 25%; height: 50%; background: rgba(143, 214, 148, 0.25); border-radius: 3px; }
 .aa-pbshare span + span { position: relative; padding-left: 4px; }
 .aa-pbsupport td { font-style: italic; }
+.aa-pbopts { gap: 14px; }
+.aa-pbatk { max-width: 260px; }
+.aa-pbens label { margin-right: 10px; white-space: nowrap; }
 .aa-pbsongs { margin-top: 2px; }

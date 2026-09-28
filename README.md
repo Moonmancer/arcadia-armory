@@ -34,6 +34,9 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Bard/Minstrel und Dancer/Gypsy können statt eines Angriffs einen Support-Song spielen (A Whistle, Assassin
    Cross of Sunset, Poem of Bragi, Apple of Idun, Humming, Fortune's Kiss, Service for You, Please Don't
    Forget Me): Er wirkt mit Level 10, den Stats und der Music/Dance Lessons des Builds auf alle anderen Mitglieder.
+   Mit Bard/Minstrel und Dancer/Gypsy in der Party lassen sich die Ensembles Invulnerable Siegfried, A Drum on
+   the Battlefield und The Ring of Nibelungen (Level 5) zuschalten. Eine Auswahl des Monster-Angriffs bestimmt
+   je Mitglied Max HP, erlittenen Schaden und Treffer bis K.O.
 5. **Stat-Vorschlag** – neben jedem Stat steht, was +1 im gewählten Maßstab bringt und wie viele
    Statuspunkte es kostet; ★ markiert das beste Verhältnis unter den bezahlbaren. Klick setzt +1.
 5. **Monster- und Klassen-Suche** – Monster- und Klassenauswahl sind Suchfelder; bei Monstern zeigt jede Zeile Level, Rasse, Element,

@@ -369,6 +369,8 @@
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
 		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
 		party: [], // "Party-Battle" members: { uid, build, skill } (skill null = the build's own)
+		partyEnsembles: [], // ENSEMBLES keys switched on in the Party-Battle
+		partyMonsterAtk: null, // B_AtkSkill value for the Party-Battle (null = as in the calculator)
 		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
 		applyInstance: true, // apply refine + cards of an owned item on selection
 		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
@@ -2988,6 +2990,13 @@
 		{ key: "service", name: "Service for You", bard: false, lv: 6, lessons: 36, stats: [[26, "INT"]] },
 		{ key: "pdfm", name: "Please Don't Forget Me", bard: false, lv: 37, lessons: 27, stats: [[38, "DEX"], [39, "AGI"]] },
 	];
+	// Ensembles (Bard/Minstrel + Dancer/Gypsy together), level 5. Mr. Kim A Rich
+	// Man (EXP only) is left out.
+	const ENSEMBLES = [
+		{ key: "siegfried", name: "Invulnerable Siegfried", idx: 7, info: "Element-Resistenz +80 %, Status-Resistenz" },
+		{ key: "drum", name: "A Drum on the Battlefield", idx: 9, info: "ATK +150, DEF +12" },
+		{ key: "nibelungen", name: "The Ring of Nibelungen", idx: 10, info: "ATK +175 mit Level-4-Waffen" },
+	];
 	const SONG_PREFIX = "song:";
 	const songOf = (skill) => (typeof skill === "string" && skill.startsWith(SONG_PREFIX) ? SONGS.find((x) => x.key === skill.slice(SONG_PREFIX.length)) : null);
 
@@ -3014,8 +3023,9 @@
 
 	// Puts the played songs on the loaded build; the "Music and Dance Skills"
 	// section (if open) is redrawn from these values so calc() reads them.
-	function applySongs(played) {
-		if (!played.length || typeof n_A_Buf3 === "undefined") return;
+	function applySongs(played, ensembles = []) {
+		if ((!played.length && !ensembles.length) || typeof n_A_Buf3 === "undefined") return;
+		for (const e of ensembles) n_A_Buf3[e.idx] = 5;
 		for (const p of played) {
 			n_A_Buf3[p.song.lv] = 10;
 			n_A_Buf3[p.song.lessons] = p.lessons;
@@ -3035,9 +3045,33 @@
 		if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
 	}
 
+	// Ensembles in effect: switched on and both a Bard/Minstrel and a Dancer/Gypsy
+	// are members (their kind is known once a build was loaded once).
+	function partyEnsembleState() {
+		const kinds = new Set(partyMembers().map((m) => (partySkills.get(m.build) || {}).kind).filter((k) => k != null));
+		const possible = kinds.has(true) && kinds.has(false);
+		return { possible, active: possible ? ENSEMBLES.filter((e) => state.settings.partyEnsembles.includes(e.key)) : [] };
+	}
+
+	// The Party-Battle's monster attack (Enemy Attack Skill) on the loaded build.
+	function applyMonsterAtk() {
+		const v = state.settings.partyMonsterAtk;
+		const sel = form.B_AtkSkill;
+		if (v == null || !sel || !hasOption(sel, v)) return;
+		sel.value = String(v);
+	}
+
+	// Damage taken by the loaded build (after the last calculation).
+	function takenNow() {
+		const recv = damageReceived();
+		const hp = Number(String((document.getElementById("A_MaxHP") || {}).textContent || "").replace(/[^\d.]/g, "")) || 0;
+		return { recv, maxHp: hp, hits: recv > 0 ? hp / recv : Infinity };
+	}
+
 	function evaluateParty() {
 		const members = partyMembers();
 		const current = captureBuild();
+		const atkBefore = form.B_AtkSkill ? form.B_AtkSkill.value : null;
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const cacheSkills = (m) => {
@@ -3048,6 +3082,7 @@
 				own: sel.value,
 				options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.value, text: o.text.trim() })),
 				songs: kind == null ? [] : SONGS.filter((x) => x.bard === kind),
+				kind,
 			});
 		};
 		try {
@@ -3060,8 +3095,17 @@
 				cacheSkills(m);
 				if (!song || performerKind(n_A_JOB) !== song.bard) continue;
 				played.push({ ...songFromCurrent(song), uid: m.uid });
-				pb.results.set(m.uid, { hit: 0, interval: 0, dps: 0, song: song.name });
+				applyMonsterAtk();
+				simulating = true;
+				try {
+					origCalc();
+				} finally {
+					simulating = false;
+				}
+				pb.results.set(m.uid, { hit: 0, interval: 0, dps: 0, song: song.name, ...takenNow() });
 			}
+			const ensembles = partyEnsembleState().active;
+			pb.ensembles = ensembles.map((e) => e.name);
 			pb.played = played;
 			pb.songs = played.map((p) => p.song.name);
 			// 2) Everyone else, with the songs of the other members.
@@ -3070,7 +3114,11 @@
 				loadBuildCode(m.b.code);
 				cacheSkills(m);
 				applyPartySkill(m.skill);
-				applySongs(played.filter((p) => p.uid !== m.uid));
+				applySongs(
+					played.filter((p) => p.uid !== m.uid),
+					ensembles
+				);
+				applyMonsterAtk();
 				const sel = form.A_ActiveSkill;
 				simulating = true;
 				try {
@@ -3080,10 +3128,14 @@
 				}
 				const hit = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
 				const interval = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
-				pb.results.set(m.uid, { hit, interval, dps: interval > 0 ? hit / interval : hit, skill: sel && sel.selectedOptions[0] ? sel.selectedOptions[0].text.trim() : "" });
+				pb.results.set(m.uid, { hit, interval, dps: interval > 0 ? hit / interval : hit, skill: sel && sel.selectedOptions[0] ? sel.selectedOptions[0].text.trim() : "", ...takenNow() });
 			}
 		} finally {
 			loadBuildCode(current);
+			if (form.B_AtkSkill && atkBefore != null && form.B_AtkSkill.value !== atkBefore) {
+				form.B_AtkSkill.value = atkBefore;
+				window.calc();
+			}
 			formObserver.takeRecords();
 		}
 		pb.hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
@@ -3114,7 +3166,8 @@
 	function loadPartyMember(m) {
 		loadBuildCode(m.b.code);
 		applyPartySkill(m.skill);
-		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid));
+		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid), partyEnsembleState().active);
+		applyMonsterAtk();
 		window.calc();
 	}
 
@@ -3129,6 +3182,10 @@
 	function renderParty() {
 		placeBuildCompare();
 		const members = partyMembers();
+		if (members.length && !pb.autoRan && !simulating) {
+			pb.autoRan = true;
+			setTimeout(evaluateParty, 0); // after a reload: skill lists and values
+		}
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const stale = members.length > 0 && (pb.enemy !== enemy || members.some((m) => !pb.results.has(m.uid)));
 		const monster = form.B_Enemy && form.B_Enemy.selectedOptions[0] ? form.B_Enemy.selectedOptions[0].text.trim() : "";
@@ -3138,6 +3195,50 @@
 		const ttk = total > 0 ? hp / total : Infinity;
 		const picker = h("select", { class: "aa-bvpick" }, h("option", { value: "" }, "Build auswählen …"), state.builds.map((b) => h("option", { value: b.id }, `${b.name} (${b.job})`)));
 
+		const atkSel = form.B_AtkSkill;
+		const monsterAtkSelect = h(
+			"label",
+			{ title: "Angriff des Monsters, gegen den der erlittene Schaden je Mitglied gerechnet wird" },
+			"Monster-Angriff: ",
+			h(
+				"select",
+				{
+					class: "aa-pbatk",
+					onchange: (e) => {
+						state.settings.partyMonsterAtk = e.target.value === "" ? null : e.target.value;
+						save();
+						evaluateParty();
+					},
+				},
+				h("option", { value: "", selected: state.settings.partyMonsterAtk == null }, `wie im Calculator (${atkSel && atkSel.selectedOptions[0] ? atkSel.selectedOptions[0].text.trim() : "–"})`),
+				atkSel ? [...atkSel.options].map((o) => h("option", { value: o.value, selected: state.settings.partyMonsterAtk === o.value }, o.text.trim())) : null
+			)
+		);
+		const ens = partyEnsembleState();
+		const ensembleToggles = h(
+			"span",
+			{ class: "aa-pbens", title: ens.possible ? "Ensembles (Level 5) wirken auf alle Mitglieder außer den Performern" : "Braucht einen Bard/Minstrel und eine Dancer/Gypsy in der Party" },
+			"Ensembles: ",
+			ENSEMBLES.map((e) =>
+				h(
+					"label",
+					{ class: ens.possible ? "" : "aa-dim", title: e.info },
+					h("input", {
+						type: "checkbox",
+						checked: state.settings.partyEnsembles.includes(e.key),
+						disabled: !ens.possible,
+						onchange: (ev) => {
+							const on = new Set(state.settings.partyEnsembles);
+							ev.target.checked ? on.add(e.key) : on.delete(e.key);
+							state.settings.partyEnsembles = ENSEMBLES.map((x) => x.key).filter((k) => on.has(k));
+							save();
+							evaluateParty();
+						},
+					}),
+					" ♫ " + e.name
+				)
+			)
+		);
 		const stat = (label, value, title) => h("div", { class: "aa-pbstat", title: title || "" }, h("span", { class: "aa-dim" }, label), h("strong", null, value));
 		const monsterCard = h(
 			"div",
@@ -3149,9 +3250,15 @@
 			stat("Zeit bis Kill", formatDuration(ttk), "HP ÷ Party-DPS"),
 			stat("Kills/Min.", Number.isFinite(ttk) && ttk > 0 ? (60 / ttk).toFixed(2) : "–", "ohne Laufwege und Respawn"),
 			stat("Mitglieder", String(members.length)),
-			pb.songs && pb.songs.length ? h("div", { class: "aa-dim aa-pbsongs" }, "♪ " + pb.songs.join(", ")) : ""
+			pb.songs && pb.songs.length ? h("div", { class: "aa-dim aa-pbsongs" }, "♪ " + pb.songs.join(", ")) : "",
+			pb.ensembles && pb.ensembles.length ? h("div", { class: "aa-dim aa-pbsongs" }, "♫ " + pb.ensembles.join(", ")) : ""
 		);
 
+		const takenCells = (r) => [
+			h("td", { class: "aa-num" }, r && r.maxHp ? r.maxHp.toLocaleString("en-US") : "–"),
+			h("td", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters (inkl. Ausweichen)" }, r ? r.recv.toFixed(1) : "–"),
+			h("td", { class: "aa-num", title: r ? `Max HP ${r.maxHp.toLocaleString("en-US")} ÷ erlittener Schaden` : "" }, r ? (Number.isFinite(r.hits) ? r.hits.toFixed(1) : "∞") : "–"),
+		];
 		const row = (m) => {
 			const r = pb.results.get(m.uid);
 			const skills = partySkills.get(m.build);
@@ -3159,6 +3266,8 @@
 				"select",
 				{ class: "aa-pbskill", title: "Angriffs-Skill dieses Mitglieds – oder ein Support-Song für die anderen", onchange: (e) => updatePartyMember(m.uid, { skill: e.target.value === "" ? null : e.target.value }) },
 				h("option", { value: "", selected: m.skill == null }, skills ? `Build-Skill (${(skills.options.find((o) => o.value === skills.own) || { text: "?" }).text})` : "Build-Skill"),
+				// Lists are known after the first calculation; until then keep the stored choice.
+				!skills && m.skill != null ? h("option", { value: m.skill, selected: true }, songOf(m.skill) ? "♪ " + songOf(m.skill).name : r && r.skill ? r.skill : "gewählter Skill") : null,
 				skills && skills.songs && skills.songs.length
 					? h("optgroup", { label: "Support-Songs (für die anderen)" }, skills.songs.map((x) => h("option", { value: SONG_PREFIX + x.key, selected: m.skill === SONG_PREFIX + x.key }, "♪ " + x.name)))
 					: null,
@@ -3172,6 +3281,7 @@
 					h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
 					h("td", null, skillSel),
 					h("td", { colspan: "3", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
+					takenCells(r),
 					h(
 						"td",
 						{ class: "aa-bvactions" },
@@ -3188,6 +3298,7 @@
 				h("td", { class: "aa-num" }, r ? r.hit.toFixed(1) : "–"),
 				h("td", { class: "aa-num", title: r && r.interval > 0 ? `alle ${r.interval.toFixed(2)} s` : "" }, r ? r.dps.toFixed(1) : "–"),
 				h("td", { class: "aa-pbshare" }, r ? [h("span", { class: "aa-pbbar", style: `width:${share.toFixed(1)}%` }), h("span", null, share.toFixed(1) + " %")] : "–"),
+				takenCells(r),
 				h(
 					"td",
 					{ class: "aa-bvactions" },
@@ -3208,6 +3319,7 @@
 						members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
 				  ),
+			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, ensembleToggles) : "",
 			members.length
 				? h(
 						"div",
@@ -3216,7 +3328,7 @@
 						h(
 							"table",
 							{ class: "aa-pbtable" },
-							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", null, ""))),
+							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", { class: "aa-num" }, "Max HP"), h("th", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters" }, "erlitten"), h("th", { class: "aa-num", title: "Treffer des Monster-Angriffs bis K.O. (Max HP ÷ erlittener Schaden)" }, "Treffer bis K.O."), h("th", null, ""))),
 							h("tbody", null, members.map(row))
 						)
 				  )
