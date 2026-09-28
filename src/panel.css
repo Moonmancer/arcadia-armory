@@ -438,7 +438,7 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbtable { flex: 1; min-width: 480px; border-collapse: collapse; font-size: 12px; }
 .aa-pbtable th, .aa-pbtable td { padding: 4px 8px; border-bottom: 1px solid #5a4fb0; text-align: left; white-space: nowrap; vertical-align: middle; }
 .aa-pbtable th { color: #e6c46a; }
-.aa-pbtable td.aa-num { text-align: right; font-variant-numeric: tabular-nums; }
+.aa-pbtable .aa-num { text-align: right; font-variant-numeric: tabular-nums; }
 .aa-pbskill { max-width: 200px; }
 .aa-pbshare { position: relative; min-width: 110px; font-variant-numeric: tabular-nums; }
 .aa-pbshare .aa-pbbar { position: absolute; left: 0; top: 25%; height: 50%; background: rgba(143, 214, 148, 0.25); border-radius: 3px; }

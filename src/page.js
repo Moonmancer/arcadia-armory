@@ -3118,7 +3118,7 @@
 						h(
 							"table",
 							{ class: "aa-pbtable" },
-							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", null, ""))),
+							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", null, ""))),
 							h("tbody", null, members.map(row))
 						)
 				  )
