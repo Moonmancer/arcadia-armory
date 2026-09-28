@@ -363,7 +363,7 @@
 		preview: "all", // "all" | "owned" | "off": damage preview in the dropdowns
 		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better) | "ehp" (hits survived) | "craft" (success rate)
 		combo: true, // replace the equipment selects with a search field
-		comboSort: "name", // "name" | "dmg": order of the search field's list
+		comboSort: "name", // "name" | "dmg" | "cat" (category, then name): order of the search field's list
 		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
@@ -1732,6 +1732,20 @@
 		o.filteredCount = hidden.filter((e) => showAll || tokens.every((t) => e.search.includes(" " + t))).reduce((sum, e) => sum + e.n, 0);
 		if (state.settings.comboSort === "dmg" && !o.slot.listOnly) {
 			shown.sort((a, b) => (b.kind === "none") - (a.kind === "none") || (Number.isFinite(b.dmg) ? b.dmg : -Infinity) - (Number.isFinite(a.dmg) ? a.dmg : -Infinity));
+		} else if (!o.slot.listOnly && !o.slot.shortcut) {
+			// "name": A-Z over all categories. "cat": categories (e.g. "Two-handed
+			// Sword") in the calculator's order, A-Z inside. The "+7" of own copies
+			// doesn't count; copies of one item keep their order (stable sort).
+			const byCat = state.settings.comboSort === "cat";
+			const catOrder = new Map();
+			if (byCat) o.rows.forEach((r) => catOrder.has(r.group || "") || catOrder.set(r.group || "", catOrder.size));
+			const key = (r) => r.name.replace(/^\+\d+\s+/, "");
+			shown.sort(
+				(a, b) =>
+					(b.kind === "none") - (a.kind === "none") ||
+					(byCat ? catOrder.get(a.group || "") - catOrder.get(b.group || "") : 0) ||
+					key(a).localeCompare(key(b), "en", { sensitivity: "base" })
+			);
 		}
 		o.shown = shown;
 		const cur = shown.findIndex((r) => r.current);
@@ -1761,8 +1775,8 @@
 			o.slot.card || o.slot.shortcut || o.slot.listOnly || o.slot.noOwned ? null : h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, disabled: !state.items.length, onchange: (e) => setAndReopen("onlyOwned", e.target.checked) }), " nur eigene"),
 			o.slot.listOnly ? null : h(
 				"button",
-				{ type: "button", class: "aa-btn aa-small", title: "Sortierung umschalten", onclick: () => setAndReopen("comboSort", s.comboSort === "dmg" ? "name" : "dmg") },
-				s.comboSort === "dmg" ? "Sortiert: Schaden" : "Sortiert: Name"
+				{ type: "button", class: "aa-btn aa-small", title: "Sortierung umschalten: Name → Schaden → Kategorie", onclick: () => setAndReopen("comboSort", { name: "dmg", dmg: "cat", cat: "name" }[s.comboSort] || "name") },
+				{ dmg: "Sortiert: Schaden", cat: "Sortiert: Kategorie" }[s.comboSort] || "Sortiert: Name"
 			)
 		);
 		const list = h(
