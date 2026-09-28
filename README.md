@@ -13,14 +13,18 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Verfeinerung und Karten automatisch übernommen (bei mehreren Exemplaren das stärkste).
 3. **Schadensvorschau** – beim Öffnen einer Ausrüstungsauswahl steht hinter jedem Eintrag, wie sich
    der Schaden ändern würde (`▲ +12.3%`). Der Tab *Vergleich* zeigt alle eigenen Exemplare pro Slot
-   sortiert nach Schadensgewinn, mit „Anlegen“-Knopf.
+   sortiert nach Schadensgewinn, mit „Anlegen“-Knopf. **Beste DPS anlegen** / **Bester Einzelschaden anlegen**
+   legen automatisch die stärkste Kombination deiner Exemplare an (mit Rückgängig).
 4. **Suchfeld statt Auswahlliste** – die Ausrüstungs-Slots sind Textfelder mit Live-Suche (mehrere
    Begriffe, auch nach Karten, Element oder Lagerort). Die Trefferliste zeigt eigene Exemplare
    einzeln mit Refine/Karten, die Schadensänderung farbig und lässt sich nach Name oder Schaden
    sortieren; Pfeiltasten/Enter/Esc funktionieren. Die Kartenfelder und die Card Shortcuts
    sind ebenfalls Suchfelder (Listen des Calculators, mit Schadensvorschau).
-   Zusätzlich gibt es in den Card Shortcuts die Ausrüstungs-Sets Goibne's, Morrigane's und Valkyrian:
+   Zusätzlich gibt es in den Card Shortcuts die Ausrüstungs-Sets Goibne's, Morrigane's, Valkyrian, Morpheus's, die Odin's-Blessing-Sets und
+   die Diabolus-Sets:
    sie legen alle Set-Teile in ihren Slots an (eigene Exemplare mit Refine/Karten bevorzugt). Abschaltbar unter *Meine Items*.
+5. **Stat-Vorschlag** – neben jedem Stat steht, was +1 im gewählten Maßstab bringt und wie viele
+   Statuspunkte es kostet; ★ markiert das beste Verhältnis unter den bezahlbaren. Klick setzt +1.
 5. **Monster- und Klassen-Suche** – Monster- und Klassenauswahl sind Suchfelder; bei Monstern zeigt jede Zeile Level, Rasse, Element,
    Größe und HP (alles durchsuchbar, z. B. „fire demi“).
 6. **Theme „Armory“** – zusätzliche Option in der Theme-Auswahl des Calculators: schlichtes
@@ -93,6 +97,8 @@ signiert – es bleibt privat, die Prüfung ist automatisiert und dauert meist n
 - `src/panel.css` – Styles des Panels
 - `src/theme-armory.css`, `src/woe-blacklist.js` – generiert von `tools/make_armory_theme.py` bzw.
   `tools/update_woe_blacklist.py`
+- `src/headgear-slots.js` – Headgears, die mehrere Kopf-Slots belegen (z. B. Mythical Lion Mask = Upper +
+  Middle), aus der Item-Datenbank des Control Panels: `python tools/update_headgear_slots.py`
 - `package.py`, `release.py` – Paket bauen bzw. signierte Fassung veröffentlichen
 
 ## Grenzen

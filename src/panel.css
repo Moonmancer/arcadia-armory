@@ -314,3 +314,41 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-cdrop .RaceDragon { color: #ff5a4f; }
 .aa-cdrop [class^="ele"], .aa-cdrop [class^="Race"] { font-weight: normal !important; }
 .aa-swapdelta { margin-left: 6px; font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.aa-opt { margin: 8px 0 10px; padding: 8px; border: 1px solid #3b3180; border-radius: 6px; }
+.aa-opt .aa-row { margin-top: 0; flex-wrap: wrap; }
+.aa-optresult { margin-top: 8px; font-size: 12px; }
+.aa-optresult ul { margin: 4px 0 6px; padding-left: 18px; color: #aaa4d6; }
+
+/* Head slot covered by a multi-slot headgear worn in another slot. */
+.aa-combo.aa-shadowed > input.aa-cinput { font-style: italic; opacity: 0.6; }
+
+/* WoE switch in the "Equipment & Cards" header */
+.aa-woe-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 3px;
+	margin-left: 12px;
+	font: 12px/1 sans-serif;
+	letter-spacing: normal;
+	text-transform: none;
+	vertical-align: middle;
+	cursor: pointer;
+}
+.aa-woe-toggle input { margin: 0; }
+.aa-header-toggles { gap: 12px; }
+.aa-header-toggles > label { display: inline-flex; align-items: center; gap: 3px; cursor: pointer; }
+.aa-cfiltered { color: #e6c46a; }
+.aa-header-metric { font: 12px sans-serif; }
+
+/* Stat suggestion next to the calculator's "+ 0" bonus */
+.aa-statgain {
+	margin-left: 6px;
+	font: 11px/1 sans-serif;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	cursor: pointer;
+}
+.aa-statgain:hover { text-decoration: underline; }
+.aa-statgain.aa-statbest { font-weight: bold; }
+.aa-statgain.aa-statpoor { opacity: 0.45; }

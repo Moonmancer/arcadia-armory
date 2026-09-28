@@ -22,6 +22,7 @@ FILES = [
     "src/bridge.js",
     "src/page.js",
     "src/woe-blacklist.js",
+    "src/headgear-slots.js",
     "src/cp.js",
     "src/panel.css",
     "src/theme-armory.css",

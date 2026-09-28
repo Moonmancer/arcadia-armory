@@ -42,6 +42,7 @@
       ],
       "js": [
         "src/woe-blacklist.js",
+        "src/headgear-slots.js",
         "src/page.js"
       ],
       "css": [

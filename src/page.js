@@ -118,7 +118,17 @@
 		1619: { name: "Survivor's Rod (INT)", slots: 0 },
 		1620: { name: "Survivor's Rod (INT)", slots: 1 },
 		5171: { name: "Valkyrian Helm", slots: 1 }, // "Valkyrie Helm [1]" in game
+		5053: { name: "Sphinx Helm", slots: 0 }, // "Sphinx Hat" in game
+		5166: { name: "Sphinx Helm", slots: 1 },
+		5494: { name: "Sphinx Helm", slots: 0 },
 	};
+
+	// Slot counts a calculator entry stands for: "0/1" -> [0, 1], 3 -> [3].
+	function calcSlotVariants(id) {
+		const v = m_Item[id] && m_Item[id][5];
+		if (typeof v === "string") return v.split("/").map((x) => Number(x) || 0);
+		return [Number(v) || 0];
+	}
 
 	// Calculator slot count; for weapons stored like "3/4" (base/max) -> max.
 	function calcSlots(id) {
@@ -130,7 +140,8 @@
 	function byGameId(gameId) {
 		const o = GAME_ID_OVERRIDES[gameId];
 		if (!o) return null;
-		const it = m_Item.find((i) => i[8] === o.name && calcSlots(i[0]) === o.slots);
+		// Prefer the entry with that slot count; the calculator often merges variants ("[0/1]").
+		const it = m_Item.find((i) => i[8] === o.name && calcSlots(i[0]) === o.slots) || m_Item.find((i) => i[8] === o.name);
 		return it ? it[0] : null;
 	}
 
@@ -208,6 +219,13 @@
 	const woeGameIds = new Set(WOE_LIST.map((r) => r[2]));
 	const woeCalcIds = new Set();
 	const woeCardIds = new Set();
+	// Slot counts listed per calculator item: the calculator often merges variants
+	// ("Hat of the Sun God [0/1]") of which only one may be forbidden.
+	const woeSlotsByCalcId = new Map();
+	const markWoe = (id, slots) => {
+		if (!woeSlotsByCalcId.has(id)) woeSlotsByCalcId.set(id, new Set());
+		woeSlotsByCalcId.get(id).add(slots);
+	};
 	for (const [name, slots, gameId] of WOE_LIST) {
 		if (/ card$/i.test(name)) {
 			(cardIndex.get(norm(name).replace(/ card$/, "")) || []).forEach((id) => woeCardIds.add(id));
@@ -215,12 +233,16 @@
 		}
 		const forced = byGameId(gameId);
 		if (forced != null) {
-			woeCalcIds.add(forced);
+			markWoe(forced, slots);
 			continue;
 		}
 		const ids = itemIndex.get(norm(name)) || itemIndexLoose.get(looseNorm(name)) || [];
-		const exact = ids.filter((id) => calcSlots(id) === slots);
-		(exact.length ? exact : ids).forEach((id) => woeCalcIds.add(id));
+		const exact = ids.filter((id) => calcSlotVariants(id).includes(slots));
+		(exact.length ? exact : ids).forEach((id) => markWoe(id, slots));
+	}
+	// A calculator item counts as forbidden only if all of its slot variants are.
+	for (const [id, listed] of woeSlotsByCalcId) {
+		if (calcSlotVariants(id).every((n) => listed.has(n))) woeCalcIds.add(id);
 	}
 
 	function woeBlockedInstance(inst) {
@@ -339,12 +361,13 @@
 	const DEFAULT_SETTINGS = {
 		onlyOwned: false, // hide non-owned items in the equipment selects
 		preview: "all", // "all" | "owned" | "off": damage preview in the dropdowns
-		metric: "dps", // "dps" | "hit"
+		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better)
 		combo: true, // replace the equipment selects with a search field
 		comboSort: "name", // "name" | "dmg": order of the search field's list
 		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
+		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
 		applyInstance: true, // apply refine + cards of an owned item on selection
 		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
 	};
@@ -418,18 +441,127 @@
 		return r;
 	};
 
+	let metricOverride = null; // "dps" | "hit" | "def" while the optimizer runs
+
+	function currentMetric() {
+		return metricOverride || state.settings.metric;
+	}
+
+	// Value to maximize for the current metric. "def" uses the calculator's
+	// "Average Dmg Received (w/dodge)" of the combat simulator, negated so that
+	// higher is better everywhere (sorting, optimizer, colors).
 	function measure() {
+		if (currentMetric() === "def") {
+			const cell = document.getElementById("B_Ave2Atk");
+			return -(Number(String(cell ? cell.textContent : "").replace(/[^\d.]/g, "")) || 0);
+		}
 		const avg = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
 		const t = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
-		if (state.settings.metric === "hit" || !(t > 0)) return avg;
+		if (currentMetric() === "hit" || !(t > 0)) return avg;
 		return avg / t;
+	}
+
+	function metricUnit(metric) {
+		return { dps: "Schaden/Sek.", hit: "Schaden/Treffer", def: "erlittener Schaden" }[metric] || "";
+	}
+
+	// Measured value as shown to the user (damage received is stored negated).
+	function metricShow(value, metric) {
+		return metric === "def" ? -value : value;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Headgears occupying several head slots (src/headgear-slots.js)
+	// ---------------------------------------------------------------------------
+	//
+	// The calculator files every headgear under one slot only. Masks use the
+	// game's bits: upper 256, middle 512, lower 1.
+
+	const HEAD_KEYS = { A_head1: 256, A_head2: 512, A_head3: 1 };
+	const HEAD_TYPE_MASK = { 50: 256, 51: 512, 52: 1 };
+	const headMaskByGameId = new Map();
+	const headMaskByCalcId = new Map();
+	for (const [name, slots, gameId, mask] of window.__AA_HEADGEAR_SLOTS || []) {
+		headMaskByGameId.set(gameId, mask);
+		const forced = byGameId(gameId);
+		const ids = forced != null ? [forced] : itemIndex.get(norm(name)) || itemIndexLoose.get(looseNorm(name)) || [];
+		const exact = ids.filter((id) => calcSlots(id) === slots);
+		(exact.length ? exact : ids).forEach((id) => headMaskByCalcId.set(id, mask));
+	}
+
+	// Head slots an item occupies (0 for "(no ... headgear)" and non-headgear).
+	function headMask(calcId, inst) {
+		const item = m_Item[calcId];
+		if (!item || !HEAD_TYPE_MASK[item[1]] || String(item[8]).startsWith("(")) return 0;
+		if (inst && inst.gameId != null && headMaskByGameId.has(Number(inst.gameId))) return headMaskByGameId.get(Number(inst.gameId));
+		return headMaskByCalcId.get(calcId) || HEAD_TYPE_MASK[item[1]];
+	}
+
+	function noneValue(select) {
+		const opt = [...select.options].find((o) => isNoneOption(o));
+		return opt ? opt.value : null;
+	}
+
+	// Other head slots that must be emptied when an item with this mask goes into
+	// slotKey: the slots it covers, and slots whose item overlaps it.
+	function headConflicts(slotKey, mask) {
+		const v = {};
+		if (!(slotKey in HEAD_KEYS) || !mask) return v;
+		for (const key of Object.keys(HEAD_KEYS)) {
+			if (key === slotKey) continue;
+			const sel = el(key);
+			if (!sel) continue;
+			const worn = Number(sel.value);
+			if (mask & HEAD_KEYS[key] || headMask(worn) & mask) {
+				const none = noneValue(sel);
+				if (none != null && sel.value !== none) v[key] = none;
+			}
+		}
+		return v;
+	}
+
+	// A head slot covered by a multi-slot headgear worn in another slot shows that
+	// headgear as a disabled "shadow" entry. Its value is the slot's "(no ...)"
+	// item, so the calculator still counts the headgear only once.
+	function updateHeadShadows() {
+		for (const key of Object.keys(HEAD_KEYS)) {
+			const sel = el(key);
+			if (!sel || sel.tagName !== "SELECT") continue;
+			let cover = null;
+			for (const other of Object.keys(HEAD_KEYS)) {
+				const o = other !== key && el(other);
+				if (!o) continue;
+				const id = Number(o.value);
+				if (headMask(id) & HEAD_KEYS[key]) cover = String(m_Item[id][8]);
+			}
+			const shadow = sel.querySelector("option[data-aa-shadow]");
+			const current = sel.options[sel.selectedIndex];
+			const empty = !current || current === shadow || isNoneOption(current);
+			if (cover && empty) {
+				if (!shadow || shadow.dataset.aaOrig !== cover) {
+					if (shadow) shadow.remove();
+					const opt = new Option(cover, noneValue(sel));
+					opt.dataset.aaShadow = "1";
+					opt.dataset.aaOrig = cover;
+					opt.disabled = true;
+					sel.insertBefore(opt, sel.firstChild);
+				}
+				const sh = sel.querySelector("option[data-aa-shadow]");
+				if (!sh.selected) sh.selected = true;
+			} else if (shadow) {
+				const wasSelected = shadow.selected;
+				shadow.remove();
+				if (wasSelected) sel.value = noneValue(sel);
+			}
+		}
 	}
 
 	// Values that a simulated variant sets on the form. Refine/card keys are
 	// included even if their select doesn't exist yet (left hand before dual
 	// wielding is enabled); simulate() skips values a select can't take.
+	// Head slots covered by a multi-slot headgear are emptied as well.
 	function variantFor(slot, calcId, inst) {
-		const v = { [slot.key]: String(calcId) };
+		const v = { ...headConflicts(slot.key, headMask(calcId, inst)), [slot.key]: String(calcId) };
 		if (inst) {
 			if (slot.refine) v[slot.refine] = String(inst.refine);
 			slot.cards.forEach((name, i) => {
@@ -542,8 +674,21 @@
 		}
 	}
 
-	function formatDelta(value, base) {
+	function formatDelta(value, base, metric = currentMetric()) {
 		if (!Number.isFinite(value)) return "";
+		if (metric === "def") {
+			// Change of the damage received; ▲ = less damage (better).
+			const now = -base;
+			const next = -value;
+			if (now > 0) {
+				const pct = ((next - now) / now) * 100;
+				if (Math.abs(pct) < 0.05) return "±0%";
+				return (pct < 0 ? "▲ −" : "▼ +") + Math.abs(pct).toFixed(1) + "%";
+			}
+			const d = next - now;
+			if (Math.abs(d) < 0.005) return "±0";
+			return (d < 0 ? "▲ −" : "▼ +") + Math.abs(d).toFixed(1);
+		}
 		if (base > 0) {
 			const pct = ((value - base) / base) * 100;
 			if (Math.abs(pct) < 0.05) return "±0%";
@@ -605,9 +750,11 @@
 	function applyFilter(select) {
 		const only = state.settings.onlyOwned && state.items.length > 0;
 		for (const opt of select.options) {
+			if (opt.dataset.aaShadow) continue;
 			const id = Number(opt.value);
 			const owned = usableInstances(id).length > 0;
-			const keep = isNoneOption(opt) || opt.selected || ((!only || owned) && !woeHidesItem(id));
+			const unavailable = state.settings.hideUnavailable && !owned && /\[Unavailable\]/i.test(optionName(opt));
+			const keep = isNoneOption(opt) || opt.selected || ((!only || owned) && !woeHidesItem(id) && !unavailable);
 			opt.hidden = !keep;
 			opt.disabled = !keep;
 			renderOption(opt);
@@ -620,13 +767,17 @@
 	// Card selects: only the WoE filter applies.
 	function applyCardFilter(select) {
 		for (const opt of select.options) {
-			const keep = !state.settings.woe || opt.selected || !woeCardIds.has(Number(opt.value));
+			const woe = state.settings.woe && woeCardIds.has(Number(opt.value));
+			const unavailable = state.settings.hideUnavailable && /\[Unavailable\]/i.test(opt.dataset.aaOrig ?? opt.text);
+			const keep = opt.selected || (!woe && !unavailable);
 			opt.hidden = !keep;
 			opt.disabled = !keep;
 		}
 	}
 
 	function refreshSelects() {
+		updateWoeHeaderToggle();
+		updateHeadShadows();
 		for (const { select } of slotSelects()) applyFilter(select);
 		for (const name of SLOTS.flatMap((sl) => sl.cards)) {
 			const sel = el(name);
@@ -757,6 +908,8 @@
 				if (r) setTimeout(() => applyVariant(slot, variantFor(slot, id, r.inst), false), 0);
 			}
 			setTimeout(() => {
+				const clear = headConflicts(slot.key, headMask(Number(select.value)));
+				if (Object.keys(clear).length) applyVariant(slot, clear, false);
 				applyFilter(select);
 				updateSwapButton();
 				select.blur();
@@ -766,8 +919,10 @@
 	);
 
 	// Sets values like a user would, firing the calculator's own handlers.
+	// Other slots in the variant (head slots emptied by a multi-slot headgear) too.
 	function applyVariant(slot, variant, includeItem) {
-		const order = [slot.key, slot.refine, ...slot.cards].filter(Boolean);
+		const others = Object.keys(variant).filter((k) => k !== slot.key && SLOT_BY_KEY[k]);
+		const order = [...others, slot.key, slot.refine, ...slot.cards].filter(Boolean);
 		for (const k of order) {
 			if (!(k in variant) || (k === slot.key && !includeItem)) continue;
 			const s = el(k);
@@ -777,6 +932,9 @@
 				s.dispatchEvent(new Event("change", { bubbles: true }));
 			}
 		}
+		// Card selects only run StAllCalc(); refresh the battle results (combat
+		// simulator, damage) as well so the page shows what was just equipped.
+		if (!simulating) window.calc();
 		refreshSelects();
 	}
 
@@ -842,10 +1000,11 @@
 		const variant = { ...toVariant(L, R, handState(L)), ...toVariant(R, L, handState(R)) };
 		const base = baseline();
 		const [value] = simulate([variant]);
-		const unit = state.settings.metric === "dps" ? "Schaden/Sek." : "Schaden/Treffer";
+		const metric = state.settings.metric;
+		const unit = metricUnit(metric);
 		swapDelta.textContent = formatDelta(value, base);
 		swapDelta.className = "aa-swapdelta " + (value > base ? "aa-up" : value < base ? "aa-down" : "");
-		swapDelta.title = Number.isFinite(value) ? `Nach dem Tausch: ${value.toFixed(2)} ${unit} (jetzt ${base.toFixed(2)})` : "";
+		swapDelta.title = Number.isFinite(value) ? `Nach dem Tausch: ${metricShow(value, metric).toFixed(2)} ${unit} (jetzt ${metricShow(base, metric).toFixed(2)})` : "";
 	}
 
 	function updateSwapButton() {
@@ -874,7 +1033,7 @@
 	const formObserver = new MutationObserver((records) => {
 		if (simulating || refreshQueued) return;
 		// Ignore option text updates and changes to the add-on's own elements.
-		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta") || n.closest(".aa-combo, .aa-swapdelta"));
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain"));
 		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && ![...r.addedNodes, ...r.removedNodes].every((n) => ours(n) || n.nodeType === 3 && ours(r.target));
 		if (!records.some(relevant)) return;
 		refreshQueued = true;
@@ -968,6 +1127,15 @@
 		{ name: "Goibne's Set", items: ["Goibne's Helm", "Goibne's Armor", "Goibne's Spaulders", "Goibne's Greaves"] },
 		{ name: "Morrigane's Set", items: ["Morrigane's Helm", "Morrigane's Manteau", "Morrigane's Belt", "Morrigane's Pendant"] },
 		{ name: "Valkyrian Set", items: ["Valkyrian Helm", "Valkyrian Armor", "Valkyrian Manteau", "Valkyrian Shoes"] },
+		{ name: "Morpheus's Set", items: ["Morpheus's Hood", "Morpheus's Shawl", "Morpheus's Ring", "Morpheus's Bracelet"] },
+		{ name: "Odin's Blessing + Magni's Cap + Stone Buckler", items: ["Odin's Blessing", "Magni's Cap", "Stone Buckler"] },
+		{ name: "Odin's Blessing + Falcon Muffler + Fricco's Shoes", items: ["Odin's Blessing", "Falcon Muffler", "Fricco's Shoes"] },
+		{ name: "Odin's Blessing + Vali's Manteau + Vidar's Boots", items: ["Odin's Blessing", "Vali's Manteau", "Vidar's Boots"] },
+		{ name: "Odin's Blessing + Frigg's Circlet + Valkyrja's Shield", items: ["Odin's Blessing", "Frigg's Circlet", "Valkyrja's Shield"] },
+		{ name: "Odin's Blessing + Ulle's Cap", items: ["Odin's Blessing", "Ulle's Cap"] },
+		{ name: "Diabolus Robe + Diabolus Ring", items: ["Diabolus Robe [Unavailable]", "Diabolus Ring [Unavailable]"] },
+		{ name: "Diabolus Armor + Diabolus Ring", items: ["Diabolus Armor [Unavailable]", "Diabolus Ring [Unavailable]"] },
+		{ name: "Diabolus Manteau + Diabolus Boots", items: ["Diabolus Manteau [Unavailable]", "Diabolus Boots [Unavailable]"] },
 	];
 	const SET_PREFIX = "aa-set-";
 	const SLOT_FOR_TYPE = { 50: ["A_head1"], 51: ["A_head2"], 52: ["A_head3"], 60: ["A_body"], 61: ["A_left"], 62: ["A_shoulder"], 63: ["A_shoes"], 64: ["A_acces1", "A_acces2"] };
@@ -979,7 +1147,8 @@
 		for (const itemName of set.items) {
 			const item = m_Item.find((i) => i[8] === itemName);
 			if (!item || woeHidesItem(item[0])) continue; // forbidden in pre-trans WoE (when that filter is on)
-			const key = (SLOT_FOR_TYPE[item[1]] || []).find((k) => !used.has(k) && el(k) && hasOption(el(k), item[0]));
+			const keys = item[1] >= 1 && item[1] <= 21 ? ["A_weapon1", "A_weapon2"] : SLOT_FOR_TYPE[item[1]] || [];
+			const key = keys.find((k) => !used.has(k) && el(k) && hasOption(el(k), item[0]));
 			if (!key) continue;
 			used.add(key);
 			const slot = SLOT_BY_KEY[key];
@@ -990,11 +1159,11 @@
 	}
 
 	// A set entry is pointless when the WoE filter removes all of its parts.
+	// ... or when "Hide unavailable" is on and a part is [Unavailable] (and not owned).
 	function equipSetHidden(set) {
-		return state.settings.woe && set.items.every((n) => {
-			const item = m_Item.find((i) => i[8] === n);
-			return !item || woeHidesItem(item[0]);
-		});
+		const items = set.items.map((n) => m_Item.find((i) => i[8] === n));
+		if (state.settings.woe && items.every((item) => !item || woeHidesItem(item[0]))) return true;
+		return state.settings.hideUnavailable && items.some((item) => item && /\[Unavailable\]/i.test(item[8]) && !ownedById.has(item[0]));
 	}
 
 	function applyEquipSet(index) {
@@ -1091,8 +1260,10 @@
 		setTimeout(() => {
 			comboSyncQueued = false;
 			if (simulating) return;
+			updateHeadShadows();
 			syncCombos();
 			updateSwapButton();
+			updateStatGains();
 		}, 0);
 	}
 
@@ -1119,6 +1290,7 @@
 		const refineSel = slot.refine && el(slot.refine);
 		const refine = refineSel && !none ? Number(refineSel.value) : 0;
 		// Only equipment slots can hold owned items; other fields' values are unrelated ids.
+		if (opt.dataset.aaShadow) return optionName(opt); // covered by a multi-slot headgear
 		const owned = Boolean(SLOT_BY_KEY[slot.key]) && ownedById.has(Number(opt.value)) && !none;
 		return (owned ? "★ " : "") + (refine ? `+${refine} ` : "") + optionName(opt);
 	}
@@ -1137,6 +1309,8 @@
 				continue;
 			}
 			if (!c) c = createCombo(slot, select);
+			const selOpt = select.options[select.selectedIndex];
+			c.wrap.classList.toggle("aa-shadowed", Boolean(selOpt && selOpt.dataset.aaShadow));
 			// Mirror what the calculator does to the (hidden) select.
 			c.wrap.style.display = select.style.display === "none" ? "none" : "";
 			c.input.disabled = select.disabled;
@@ -1250,13 +1424,28 @@
 	// All choices of a slot with their damage value, cached per calculator state.
 	function comboRows(slot, select) {
 		const s = state.settings;
-		const key = [calcVersion, select.options.length, s.preview, s.metric, s.applyInstance, s.onlyOwned, s.woe, state.items.length].join("|");
+		const key = [calcVersion, select.options.length, s.preview, s.metric, s.applyInstance, s.onlyOwned, s.woe, s.hideUnavailable, state.items.length].join("|");
 		const cached = comboCache.get(select);
 		if (cached && cached.key === key) return cached.rows;
 
 		const rows = [];
+		// Entries hidden by a filter (WoE, unavailable, own only) as { search, n }:
+		// n = rows they would produce (one per own copy), to show how many matches
+		// the filters remove.
+		rows.hiddenSearch = [];
+		const isSlot = Boolean(SLOT_BY_KEY[slot.key]);
 		for (const opt of select.options) {
-			if (opt.hidden && !opt.selected) continue;
+			if (opt.dataset.aaShadow) continue;
+			const g = opt.parentElement && opt.parentElement.tagName === "OPTGROUP" ? opt.parentElement.label : "";
+			const copies = isSlot && s.applyInstance && !isNoneOption(opt) ? (ownedById.get(Number(opt.value)) || []).length : 0;
+			if (opt.hidden && !opt.selected) {
+				rows.hiddenSearch.push({ search: " " + searchNorm(optionName(opt) + " " + g), n: copies || 1 });
+				continue;
+			}
+			// Visible item, but some own copies are forbidden in pre-trans WoE.
+			// (With no usable copy left the item still shows as one plain row.)
+			const blocked = copies ? copies - (usableInstances(Number(opt.value)).length || 1) : 0;
+			if (blocked > 0) rows.hiddenSearch.push({ search: " " + searchNorm(optionName(opt) + " " + g), n: blocked });
 			const id = Number(opt.value);
 			const name = optionName(opt);
 			const group = opt.parentElement && opt.parentElement.tagName === "OPTGROUP" ? opt.parentElement.label : "";
@@ -1280,7 +1469,7 @@
 		}
 		for (const r of rows) {
 			r.search = " " + searchNorm([r.name, r.group, r.subText ?? r.sub].join(" "));
-			r.variant = r.kind === "inst" ? variantFor(slot, r.id, r.inst) : { [slot.key]: r.value };
+			r.variant = r.kind === "inst" ? variantFor(slot, r.id, r.inst) : SLOT_BY_KEY[slot.key] ? variantFor(slot, Number(r.value), null) : { [slot.key]: r.value };
 			r.current = slot.shortcut ? false : isCurrentVariant(r.variant);
 		}
 
@@ -1332,6 +1521,8 @@
 		const showAll = !q || q === searchNorm(currentLabel(o.slot, o.select).replace(/^★\s*/, ""));
 		const tokens = q.split(" ").filter(Boolean);
 		let shown = showAll ? o.rows.slice() : o.rows.filter((r) => tokens.every((t) => r.search.includes(" " + t)));
+		const hidden = o.rows.hiddenSearch || [];
+		o.filteredCount = hidden.filter((e) => showAll || tokens.every((t) => e.search.includes(" " + t))).reduce((sum, e) => sum + e.n, 0);
 		if (state.settings.comboSort === "dmg" && !o.slot.listOnly) {
 			shown.sort((a, b) => (b.kind === "none") - (a.kind === "none") || (Number.isFinite(b.dmg) ? b.dmg : -Infinity) - (Number.isFinite(a.dmg) ? a.dmg : -Infinity));
 		}
@@ -1359,7 +1550,7 @@
 		const head = h(
 			"div",
 			{ class: "aa-chead" },
-			h("span", { class: "aa-dim" }, h("strong", { class: "aa-cslotname" }, o.slot.label), ` · ${o.shown.length} Treffer`),
+			h("span", { class: "aa-dim" }, h("strong", { class: "aa-cslotname" }, o.slot.label), ` · ${o.shown.length} Treffer`, o.filteredCount ? h("span", { class: "aa-cfiltered", title: "Passende Einträge, die ein Filter ausblendet (Pre-trans WoE, Hide unavailable, nur eigene)" }, ` · ${o.filteredCount} gefiltert`) : null),
 			o.slot.card || o.slot.shortcut || o.slot.listOnly ? null : h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, disabled: !state.items.length, onchange: (e) => setAndReopen("onlyOwned", e.target.checked) }), " nur eigene"),
 			o.slot.listOnly ? null : h(
 				"button",
@@ -1388,7 +1579,7 @@
 				)
 			),
 			o.shown.length > MAX_ROWS ? h("div", { class: "aa-crow aa-dim" }, `… ${o.shown.length - MAX_ROWS} weitere – Suche verfeinern`) : null,
-			o.shown.length === 0 ? h("div", { class: "aa-crow aa-dim" }, "Keine Treffer") : null
+			o.shown.length === 0 ? h("div", { class: "aa-crow aa-dim" }, o.filteredCount ? `Keine Treffer – ${o.filteredCount} durch Filter ausgeblendet` : "Keine Treffer") : null
 		);
 		dropdown.replaceChildren(head, list);
 		scrollActiveIntoView();
@@ -1485,7 +1676,7 @@
 		return node;
 	}
 
-	const ui = { tab: "import", compare: null, lastImport: null, inbox: null, scroll: {}, renderedTab: null };
+	const ui = { tab: "import", compare: null, lastImport: null, inbox: null, scroll: {}, renderedTab: null, optimized: null };
 
 	function applyImport(res, replace) {
 		state.items = replace ? res.items : dedupe([...state.items, ...res.items]);
@@ -1621,16 +1812,121 @@
 		];
 	}
 
+	// ---------------------------------------------------------------------------
+	// Stat suggestion: what +1 in each stat would bring, and what it costs
+	// ---------------------------------------------------------------------------
+
+	const STAT_KEYS = ["A_STR", "A_AGI", "A_VIT", "A_INT", "A_DEX", "A_LUK"];
+	const statGain = new Map(); // stat key -> <span> next to the calculator's "+ 0" bonus
+	let statGainVersion = null;
+
+	// Status points needed to raise a stat from x to x + 1 (calculator's StCalc2).
+	const statCost = (x) => Math.floor((x - 1) / 10) + 2;
+
+	function updateStatGains() {
+		const off = state.settings.preview === "off";
+		for (const key of STAT_KEYS) {
+			const anchor = document.getElementById(key + "p");
+			if (!anchor) continue;
+			let span = statGain.get(key);
+			if (!span) {
+				span = h("span", { class: "aa-statgain", onclick: () => raiseStat(key) });
+				statGain.set(key, span);
+			}
+			if (anchor.nextSibling !== span) anchor.after(span);
+			if (off) span.textContent = "";
+		}
+		if (off || statGainVersion === calcVersion) return;
+		statGainVersion = calcVersion;
+
+		const metric = state.settings.metric;
+		const remaining = Number((document.getElementById("A_STPOINT") || {}).textContent) || 0;
+		const rows = STAT_KEYS.map((key) => {
+			const sel = el(key);
+			const cur = sel ? Number(sel.value) : 0;
+			return { key, cur, next: sel && hasOption(sel, cur + 1) ? String(cur + 1) : null, cost: statCost(cur + 1) };
+		});
+		const base = baseline();
+		const open = rows.filter((r) => r.next);
+		const vals = simulate(open.map((r) => ({ [r.key]: r.next })));
+		open.forEach((r, i) => (r.value = vals[i]));
+		// Best gain per status point among the stats that are affordable now.
+		let best = null;
+		for (const r of open) {
+			const perPoint = (r.value - base) / r.cost;
+			if (r.cost <= remaining && perPoint > 1e-9 && (!best || perPoint > best.perPoint)) best = { key: r.key, perPoint };
+		}
+		for (const r of rows) {
+			const span = statGain.get(r.key);
+			if (!span) continue;
+			if (!r.next) {
+				span.textContent = "";
+				continue;
+			}
+			const name = r.key.slice(2);
+			const affordable = r.cost <= remaining;
+			span.textContent = `${best && best.key === r.key ? "★ " : ""}+1: ${formatDelta(r.value, base)} · ${r.cost} P.`;
+			span.className = "aa-statgain " + (r.value > base ? "aa-up" : r.value < base ? "aa-down" : "") + (best && best.key === r.key ? " aa-statbest" : "") + (affordable ? "" : " aa-statpoor");
+			span.title =
+				`${name} ${r.cur} → ${r.next} kostet ${r.cost} Statuspunkte${affordable ? "" : ` (nur ${remaining} übrig)`}: ` +
+				`${metricShow(base, metric).toFixed(2)} → ${metricShow(r.value, metric).toFixed(2)} ${metricUnit(metric)}. Klick: +1 setzen.`;
+		}
+	}
+
+	function raiseStat(key) {
+		const sel = el(key);
+		if (!sel || !hasOption(sel, Number(sel.value) + 1)) return;
+		sel.value = String(Number(sel.value) + 1);
+		sel.dispatchEvent(new Event("change", { bubbles: true }));
+	}
+
+	// Changes a setting from anywhere (panel, header toggle) and redraws what depends on it.
+	function applySetting(k, v) {
+		state.settings[k] = v;
+		save();
+		invalidate();
+		slotSelects().forEach(({ select }) => clearAnnotations(select));
+		refreshSelects();
+		renderPanel();
+	}
+
+	// Filter switches in the "Equipment & Cards" header, right after the title
+	// (copies of the ones in the panel settings).
+	const headerToggle = (key, label, title) =>
+		h("label", { class: "aa-woe-toggle", title, "data-setting": key }, h("input", { type: "checkbox", onchange: (e) => applySetting(key, e.target.checked) }), " " + label);
+	const headerToggles = h(
+		"span",
+		{ class: "aa-woe-toggle aa-header-toggles" },
+		headerToggle("woe", "Pre-trans WoE", `Blendet die ${WOE_LIST.length} in Pre-trans WoE verbotenen Items und Karten aus (Liste von Arcadia, Stand ${WOE_AS_OF}).`),
+		headerToggle("hideUnavailable", "Hide unavailable", "Blendet Items und Karten aus, die der Calculator als [Unavailable] markiert (eigene Exemplare bleiben sichtbar)."),
+		h(
+			"label",
+			{ title: "Maßstab für Schadensvorschau, Vergleich und Hände-Tausch" },
+			"Maßstab: ",
+			h(
+				"select",
+				{ class: "aa-header-metric", onchange: (e) => applySetting("metric", e.target.value) },
+				h("option", { value: "dps" }, "Ø Schaden/Sek."),
+				h("option", { value: "hit" }, "Ø Schaden/Treffer"),
+				h("option", { value: "def" }, "Ø erlittener Schaden")
+			)
+		)
+	);
+	function updateWoeHeaderToggle() {
+		const anchor = document.getElementById("episode");
+		if (anchor && headerToggles.nextElementSibling !== anchor) anchor.before(headerToggles);
+		for (const label of headerToggles.querySelectorAll("label[data-setting]")) {
+			const box = label.querySelector("input");
+			const on = Boolean(state.settings[label.dataset.setting]);
+			if (box.checked !== on) box.checked = on;
+		}
+		const metric = headerToggles.querySelector(".aa-header-metric");
+		if (metric.value !== state.settings.metric) metric.value = state.settings.metric;
+	}
+
 	function settingsBlock() {
 		const s = state.settings;
-		const set = (k, v) => {
-			s[k] = v;
-			save();
-			invalidate();
-			slotSelects().forEach(({ select }) => clearAnnotations(select));
-			refreshSelects();
-			renderPanel();
-		};
+		const set = applySetting;
 		return h(
 			"div",
 			{ class: "aa-settings" },
@@ -1642,6 +1938,12 @@
 				{ title: `Blendet die ${WOE_LIST.length} in Pre-trans WoE verbotenen Items und Karten aus (Liste von Arcadia, Stand ${WOE_AS_OF}).` },
 				h("input", { type: "checkbox", checked: s.woe, onchange: (e) => set("woe", e.target.checked) }),
 				" Pre-trans WoE: verbotene Items ausblenden"
+			),
+			h(
+				"label",
+				{ title: "Blendet Items und Karten aus, die der Calculator als [Unavailable] markiert (eigene Exemplare bleiben sichtbar)." },
+				h("input", { type: "checkbox", checked: s.hideUnavailable, onchange: (e) => set("hideUnavailable", e.target.checked) }),
+				" Hide unavailable: nicht verfügbare Items ausblenden"
 			),
 			h(
 				"label",
@@ -1663,7 +1965,8 @@
 					"select",
 					{ onchange: (e) => set("metric", e.target.value) },
 					h("option", { value: "dps", selected: s.metric === "dps" }, "Ø Schaden / Sekunde"),
-					h("option", { value: "hit", selected: s.metric === "hit" }, "Ø Schaden / Treffer")
+					h("option", { value: "hit", selected: s.metric === "hit" }, "Ø Schaden / Treffer"),
+					h("option", { value: "def", selected: s.metric === "def" }, "Ø erlittener Schaden (Verteidigung)")
 				)
 			)
 		);
@@ -1758,18 +2061,201 @@
 		ui.compare = { rows, base, notEquippable: state.items.filter((i) => notEquippable.has(i.uid)), version: calcVersion };
 	}
 
+	// ---------------------------------------------------------------------------
+	// Optimizer: equip the own copies with the highest DPS / damage per hit
+	// ---------------------------------------------------------------------------
+
+	// Items that may be worn only once at a time, whatever the number of copies owned.
+	const WEAR_ONCE = new Set(["The Sign"]);
+
+	const OPT_ORDER = ["A_weapon1", "A_weapon2", "A_head1", "A_head2", "A_head3", "A_body", "A_left", "A_shoulder", "A_shoes", "A_acces1", "A_acces2"];
+
+	// Current values of all equipment selects (item, refine, cards) to undo a run.
+	function equipmentSnapshot() {
+		return OPT_ORDER.map((key) => {
+			const slot = SLOT_BY_KEY[key];
+			return { key, values: el(key) ? handState(slot) : null };
+		});
+	}
+
+	function restoreSnapshot(snapshot) {
+		applying = true;
+		try {
+			for (const { key, values } of snapshot) {
+				if (values && el(key)) applyVariant(SLOT_BY_KEY[key], values, true);
+			}
+		} finally {
+			applying = false;
+		}
+		invalidate();
+		refreshSelects();
+	}
+
+	// Calculator equipment sets (w_SE) whose parts are all owned and wearable now:
+	// [{ key, slot, id, inst }] per set, best own copy per part. Sets already worn
+	// completely are skipped.
+	function setPlans(chosen) {
+		if (typeof w_SE === "undefined") return [];
+		const plans = [];
+		for (const entry of w_SE) {
+			const parts = entry.slice(1, entry.indexOf("NULL"));
+			if (parts.length < 2 || !parts.every((id) => usableInstances(id).length)) continue;
+			const used = new Set();
+			const plan = [];
+			for (const id of parts) {
+				const type = m_Item[id] ? m_Item[id][1] : 0;
+				const keys = type >= 1 && type <= 21 ? ["A_weapon1", "A_weapon2"] : SLOT_FOR_TYPE[type] || [];
+				const key = keys.find((k) => !used.has(k) && el(k) && hasOption(el(k), id));
+				const best = key && evaluateOwned(SLOT_BY_KEY[key], id);
+				if (!best) break;
+				// Don't take a copy that is already worn in a slot outside this set.
+				const takenElsewhere = [...chosen].filter(([k, i]) => i.uid === best.inst.uid && !used.has(k) && k !== key).length;
+				if (takenElsewhere >= (best.inst.count || 1)) break;
+				used.add(key);
+				plan.push({ key, slot: SLOT_BY_KEY[key], id, inst: best.inst });
+			}
+			if (plan.length !== parts.length) continue;
+			if (plan.every((p) => el(p.key).value === String(p.id))) continue;
+			plans.push(plan);
+		}
+		return plans;
+	}
+
+	// Coordinate descent over the slots: per slot put on the best own copy given
+	// the rest of the equipment, repeated until nothing improves (sets / combos).
+	function optimizeEquipment(metric) {
+		const snapshot = equipmentSnapshot();
+		metricOverride = metric;
+		const chosen = new Map(); // slot key -> instance
+		const changes = [];
+		let start = 0;
+		let end = 0;
+		try {
+			start = baseline();
+			for (let pass = 0; pass < 3; pass++) {
+				let improved = false;
+				for (const key of OPT_ORDER) {
+					const select = el(key);
+					if (!select || select.tagName !== "SELECT") continue;
+					const slot = SLOT_BY_KEY[key];
+					// Copies still available: never wear one copy more often than owned.
+					const usedElsewhere = (inst) => [...chosen].filter(([k, i]) => k !== key && i.uid === inst.uid).length;
+					// WEAR_ONCE items: not if another slot already holds that item.
+					const wornElsewhere = (calcId) => OPT_ORDER.some((k) => k !== key && el(k) && Number(el(k).value) === calcId);
+					const cands = [];
+					for (const calcId of ownedById.keys()) {
+						if (!hasOption(select, calcId)) continue;
+						if (WEAR_ONCE.has(m_Item[calcId][8]) && wornElsewhere(calcId)) continue;
+						for (const inst of usableInstances(calcId)) {
+							if (usedElsewhere(inst) < (inst.count || 1)) cands.push({ inst, variant: variantFor(slot, calcId, inst) });
+						}
+					}
+					if (!cands.length) continue;
+					const base = baseline();
+					const vals = simulate(cands.map((c) => c.variant));
+					let best = -1;
+					vals.forEach((v, i) => {
+						if (Number.isFinite(v) && v > base + Math.abs(base) * 1e-9 + 1e-9 && (best < 0 || v > vals[best])) best = i;
+					});
+					if (best < 0) continue;
+					applying = true;
+					try {
+						applyVariant(slot, cands[best].variant, true);
+					} finally {
+						applying = false;
+					}
+					chosen.set(key, cands[best].inst);
+					improved = true;
+				}
+				// Sets: parts that are only strong together (e.g. Shackles + Bloodied
+				// Shackle Ball = ATK +50) are never picked one slot at a time.
+				for (const plan of setPlans(chosen)) {
+					const variant = Object.assign({}, ...plan.map((p) => variantFor(p.slot, p.id, p.inst)));
+					const base = baseline();
+					const [value] = simulate([variant]);
+					if (!(Number.isFinite(value) && value > base + Math.abs(base) * 1e-9 + 1e-9)) continue;
+					applying = true;
+					try {
+						for (const p of plan) applyVariant(p.slot, variantFor(p.slot, p.id, p.inst), true);
+					} finally {
+						applying = false;
+					}
+					plan.forEach((p) => chosen.set(p.key, p.inst));
+					improved = true;
+				}
+				if (!improved) break;
+			}
+			end = baseline();
+		} finally {
+			metricOverride = null;
+		}
+		for (const [key, inst] of chosen) changes.push({ slot: SLOT_BY_KEY[key].label, inst });
+		changes.sort((a, b) => OPT_ORDER.indexOf(SLOTS.find((x) => x.label === a.slot).key) - OPT_ORDER.indexOf(SLOTS.find((x) => x.label === b.slot).key));
+		invalidate();
+		refreshSelects();
+		ui.optimized = { metric, start, end, changes, snapshot };
+		computeCompare();
+		renderPanel();
+	}
+
+	function renderOptimizer() {
+		const o = ui.optimized;
+		const unit = metricUnit;
+		// The run takes a few seconds; let the browser paint the busy state first.
+		const run = (metric) => (e) => {
+			e.target.closest(".aa-opt").querySelectorAll("button").forEach((b) => (b.disabled = true));
+			e.target.textContent = "Rechne …";
+			setTimeout(() => optimizeEquipment(metric), 30);
+		};
+		return h(
+			"div",
+			{ class: "aa-opt" },
+			h(
+				"div",
+				{ class: "aa-row" },
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Sekunde an", onclick: run("dps") }, "Beste DPS anlegen"),
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Treffer an", onclick: run("hit") }, "Bester Einzelschaden anlegen"),
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare an, mit denen du vom gewählten Monster am wenigsten Schaden erleidest (Combat Simulator, inkl. Ausweichen)", onclick: run("def") }, "Beste Verteidigung anlegen")
+			),
+			o
+				? h(
+						"div",
+						{ class: "aa-optresult" },
+						h(
+							"div",
+							null,
+							o.changes.length ? `${o.changes.length} Slot(s) geändert · ` : "Keine Verbesserung gefunden · ",
+							h("span", { class: o.end > o.start ? "aa-up" : "" }, formatDelta(o.end, o.start, o.metric)),
+							` (${metricShow(o.start, o.metric).toFixed(2)} → ${metricShow(o.end, o.metric).toFixed(2)} ${unit(o.metric)})`
+						),
+						o.changes.length
+							? h(
+									"ul",
+									null,
+									o.changes.map((c) => h("li", null, `${c.slot}: ${(c.inst.refine ? `+${c.inst.refine} ` : "") + c.inst.name}${instanceSummary({ ...c.inst, refine: 0 }) ? " (" + instanceSummary({ ...c.inst, refine: 0 }) + ")" : ""}`))
+							  )
+							: null,
+						o.changes.length
+							? h("button", { type: "button", class: "aa-btn aa-small", onclick: () => (restoreSnapshot(o.snapshot), (ui.optimized = null), computeCompare(), renderPanel()) }, "Rückgängig")
+							: null
+				  )
+				: null
+		);
+	}
+
 	function renderCompare() {
 		if (ui.compare && ui.compare.version !== calcVersion) ui.compare.stale = true;
 		const c = ui.compare;
 		return [
 			h("p", { class: "aa-hint" }, "Simuliert jedes eigene Exemplar im passenden Slot mit dem aktuellen Charakter, Skill und Monster."),
-			h("button", { type: "button", class: "aa-btn aa-primary", onclick: () => (computeCompare(), renderPanel()) }, c ? "Neu berechnen" : "Berechnen"),
+			renderOptimizer(),
+			h("button", { type: "button", class: "aa-btn", onclick: () => (computeCompare(), renderPanel()) }, c ? "Neu berechnen" : "Berechnen"),
 			c && c.stale ? h("p", { class: "aa-warn" }, "Der Charakter wurde seitdem geändert – neu berechnen für aktuelle Werte.") : null,
 			c
 				? h(
 						"div",
 						null,
-						h("p", { class: "aa-dim" }, `Aktuell: ${c.base.toFixed(2)} ${state.settings.metric === "dps" ? "Schaden/Sek." : "Schaden/Treffer"}`),
+						h("p", { class: "aa-dim" }, `Aktuell: ${metricShow(c.base, state.settings.metric).toFixed(2)} ${metricUnit(state.settings.metric)}`),
 						groupToolbar(c.rows.map((row) => "compare:" + row.slot.key)),
 						c.rows.map((row) =>
 							groupBlock("compare:" + row.slot.key, row.slot.label, row.entries.length, () =>

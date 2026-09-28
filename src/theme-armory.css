@@ -827,6 +827,15 @@ html.aa-theme-armory .aa-cslot {
 html.aa-theme-armory .aa-cslotname {
 	color: #c5c5c5 !important;
 }
+html.aa-theme-armory .aa-opt {
+	border: 1px solid #393939 !important;
+}
+html.aa-theme-armory .aa-optresult ul {
+	color: #a9a9a9 !important;
+}
+html.aa-theme-armory .aa-cfiltered {
+	color: #c5c5c5 !important;
+}
 
 /* ---- readable form fields ---- */
 html.aa-theme-armory select:not(.aa-cinput):not(#aa-none),
