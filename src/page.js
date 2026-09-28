@@ -361,7 +361,7 @@
 	const DEFAULT_SETTINGS = {
 		onlyOwned: false, // hide non-owned items in the equipment selects
 		preview: "all", // "all" | "owned" | "off": damage preview in the dropdowns
-		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better) | "craft" (success rate)
+		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better) | "ehp" (hits survived) | "craft" (success rate)
 		combo: true, // replace the equipment selects with a search field
 		comboSort: "name", // "name" | "dmg": order of the search field's list
 		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
@@ -455,9 +455,12 @@
 	// higher is better everywhere (sorting, optimizer, colors).
 	function measure() {
 		if (currentMetric() === "craft") return craftInfo().rate;
-		if (currentMetric() === "def") {
-			const cell = document.getElementById("B_Ave2Atk");
-			return -(Number(String(cell ? cell.textContent : "").replace(/[^\d.]/g, "")) || 0);
+		if (currentMetric() === "def") return -damageReceived();
+		if (currentMetric() === "ehp") {
+			// Effective HP: average hits of the chosen monster attack until K.O. With
+			// no damage taken at all, Max HP alone still ranks the items.
+			const hp = Number(String((document.getElementById("A_MaxHP") || {}).textContent || "").replace(/[^\d.]/g, "")) || 0;
+			return hp / Math.max(damageReceived(), 1e-3);
 		}
 		const avg = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
 		const t = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
@@ -465,9 +468,16 @@
 		return avg / t;
 	}
 
+	// "Average Dmg Received (w/dodge)" of the combat simulator: DEF / MDEF,
+	// race / element / size reductions, Flee, Perfect Dodge, Parrying ...
+	function damageReceived() {
+		const cell = document.getElementById("B_Ave2Atk");
+		return Number(String(cell ? cell.textContent : "").replace(/[^\d.]/g, "")) || 0;
+	}
+
 	function metricUnit(metric) {
 		if (metric === "craft") return "% Erfolg (" + craftInfo().name + ")";
-		return { dps: "Schaden/Sek.", hit: "Schaden/Treffer", def: "erlittener Schaden" }[metric] || "";
+		return { dps: "Schaden/Sek.", hit: "Schaden/Treffer", def: "erlittener Schaden", ehp: "Treffer bis K.O." }[metric] || "";
 	}
 
 	// ---------------------------------------------------------------------------
@@ -2021,6 +2031,7 @@
 				h("option", { value: "dps" }, "Ø Schaden/Sek."),
 				h("option", { value: "hit" }, "Ø Schaden/Treffer"),
 				h("option", { value: "def" }, "Ø erlittener Schaden"),
+				h("option", { value: "ehp", title: "Max HP ÷ Ø erlittener Schaden vom gewählten Monster-Angriff (inkl. DEF, Reduktionen, Ausweichen): Treffer bis K.O." }, "Effektive HP"),
 				h("option", { value: "craft", title: "Forging, Potions, EDP (Poison Bottle) oder Cooking – je nach Klasse bzw. „Other Info“" }, "Herstellungs-Erfolg")
 			)
 		)
@@ -2080,6 +2091,7 @@
 					h("option", { value: "dps", selected: s.metric === "dps" }, "Ø Schaden / Sekunde"),
 					h("option", { value: "hit", selected: s.metric === "hit" }, "Ø Schaden / Treffer"),
 					h("option", { value: "def", selected: s.metric === "def" }, "Ø erlittener Schaden (Verteidigung)"),
+					h("option", { value: "ehp", selected: s.metric === "ehp" }, "Effektive HP (Max HP ÷ erlittener Schaden)"),
 					h("option", { value: "craft", selected: s.metric === "craft" }, "Herstellungs-Erfolg (Forging / Potion / EDP / Cooking)")
 				)
 			)
@@ -2330,6 +2342,7 @@
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Sekunde an", onclick: run("dps") }, "Beste DPS anlegen"),
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Treffer an", onclick: run("hit") }, "Bester Einzelschaden anlegen"),
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare an, mit denen du vom gewählten Monster am wenigsten Schaden erleidest (Combat Simulator, inkl. Ausweichen)", onclick: run("def") }, "Beste Verteidigung anlegen"),
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare an, mit denen du die meisten Treffer des gewählten Monsters aushältst (Max HP ÷ Ø erlittener Schaden)", onclick: run("ehp") }, "Beste effektive HP anlegen"),
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit der höchsten Erfolgschance an: Forging, Potions, EDP oder Cooking – je nach Klasse bzw. „Other Info“", onclick: run("craft") }, "Beste Herstellung anlegen")
 			),
 			o

@@ -43,7 +43,14 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    die Waffen der rechten und linken Hand samt Verfeinerung und Karten.
 
 Gerechnet wird mit der Engine des Calculators selbst, also mit aktuellem Charakter, Skill und
-Monster. Maßstab: Ø Schaden pro Sekunde oder pro Treffer (einstellbar).
+Monster. Maßstab (im Header neben den Filtern oder im Panel einstellbar):
+
+| Maßstab | Was verglichen wird |
+| --- | --- |
+| Ø Schaden/Sek., Ø Schaden/Treffer | Schaden des gewählten Skills gegen das Monster |
+| Ø erlittener Schaden | „Average Dmg Received (w/dodge)“ des Combat Simulators |
+| Effektive HP | Max HP ÷ Ø erlittener Schaden = Treffer des Monster-Angriffs bis K.O. (HP, DEF/MDEF, Reduktionen, Ausweichen) |
+| Herstellungs-Erfolg | Erfolgschance nach den Formeln aus „Other Info“: Forging (Blacksmith), Potions (Alchemist), EDP/Poison Bottle (Assassin Cross), sonst Cooking; ungekappt, damit sich Items auch bei 0 % bzw. 100 % unterscheiden |
 
 ## Installation
 
