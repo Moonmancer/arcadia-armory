@@ -353,6 +353,40 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-statgain.aa-statbest { font-weight: bold; }
 .aa-statgain.aa-statpoor { opacity: 0.45; }
 
+/* Stat fields [-][value][+] (replace the calculator's selects) */
+.aa-stat {
+	display: inline-flex;
+	align-items: stretch;
+	vertical-align: middle;
+	height: 20px;
+	border: 1px solid rgba(128, 128, 128, 0.55);
+	border-radius: 6px;
+	overflow: hidden;
+}
+.aa-stat .aa-statbtn {
+	width: 18px;
+	padding: 0;
+	border: 0;
+	background: rgba(128, 128, 128, 0.18);
+	color: inherit;
+	font: bold 13px/1 sans-serif;
+	cursor: pointer;
+}
+.aa-stat .aa-statbtn:hover:not(:disabled) { background: rgba(128, 128, 128, 0.38); }
+.aa-stat .aa-statbtn:disabled { opacity: 0.35; cursor: default; }
+.aa-stat input.aa-statval {
+	width: 26px;
+	margin: 0;
+	padding: 0 2px;
+	border: 0 !important;
+	border-left: 1px solid rgba(128, 128, 128, 0.55) !important;
+	border-right: 1px solid rgba(128, 128, 128, 0.55) !important;
+	border-radius: 0;
+	text-align: center;
+	font: 12px/18px sans-serif;
+	font-variant-numeric: tabular-nums;
+}
+
 /* Builds tab */
 .aa-bname {
 	flex: 1;

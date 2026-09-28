@@ -1189,7 +1189,7 @@
 		// Only select rebuilds count: added / removed selects, options or optgroups.
 		// Result texts the calculator rewrites after every calc() (HP, ATK, ...) and
 		// the add-on's own elements are ignored.
-		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-bv, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-bv"));
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv"));
 		const selectish = (n) => n.nodeType === 1 && !ours(n) && (n.matches("select, option, optgroup") || Boolean(n.querySelector("select")));
 		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && [...r.addedNodes, ...r.removedNodes].some(selectish);
 		if (!records.some(relevant)) return;
@@ -1469,6 +1469,7 @@
 			updateHeadShadows();
 			syncCombos();
 			updateSwapButton();
+			updateStatSteppers();
 			updateStatGains();
 			renderBuildCompare();
 		}, 0);
@@ -2094,6 +2095,86 @@
 				`${metricShow(base, metric).toFixed(2)} → ${metricShow(r.value, metric).toFixed(2)} ${metricUnit(metric)}. Klick: +1 setzen.`;
 		}
 	}
+
+	// ---------------------------------------------------------------------------
+	// Stat fields as [-][value][+]
+	// ---------------------------------------------------------------------------
+	//
+	// The calculator's selects stay in the form (hidden); the stepper only sets
+	// their value and fires their change handler. Values 1-99, and never beyond
+	// what the calculator's list offers.
+
+	const statSteppers = new Map(); // stat key -> { wrap, input, minus, plus }
+
+	function statRange(sel) {
+		const vals = [...sel.options].map((o) => Number(o.value)).filter(Number.isFinite);
+		return { min: Math.max(1, Math.min(...vals)), max: Math.min(99, Math.max(...vals)) };
+	}
+
+	function setStat(key, value) {
+		const sel = el(key);
+		if (!sel) return;
+		const { min, max } = statRange(sel);
+		const v = Math.min(max, Math.max(min, Math.round(Number(value)) || min));
+		if (hasOption(sel, v) && sel.value !== String(v)) {
+			sel.value = String(v);
+			sel.dispatchEvent(new Event("change", { bubbles: true }));
+		}
+		const st = statSteppers.get(key);
+		if (st) st.input.value = sel.value; // also shows the clamped value (0 → 1, 150 → 99)
+		syncStatStepper(key);
+	}
+
+	function statStepper(key) {
+		let st = statSteppers.get(key);
+		if (st) return st;
+		const step = (d) => (e) => setStat(key, Number(el(key).value) + (e.shiftKey ? 10 * d : d));
+		const input = h("input", { type: "text", class: "aa-statval", inputmode: "numeric", maxlength: "3", "aria-label": key.slice(2), title: "1–99 · Enter übernimmt · ↑/↓ ±1" });
+		input.addEventListener("input", () => (input.value = input.value.replace(/\D/g, "").slice(0, 3)));
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") {
+				e.preventDefault();
+				setStat(key, input.value);
+			} else if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+				e.preventDefault();
+				setStat(key, Number(el(key).value) + (e.key === "ArrowUp" ? 1 : -1) * (e.shiftKey ? 10 : 1));
+				input.select();
+			} else if (e.key === "Escape") {
+				input.value = el(key).value;
+				input.blur();
+			}
+		});
+		input.addEventListener("focus", () => input.select());
+		input.addEventListener("blur", () => setStat(key, input.value));
+		const minus = h("button", { type: "button", class: "aa-statbtn", tabindex: "-1", title: "−1 (Shift: −10)", onclick: step(-1) }, "−");
+		const plus = h("button", { type: "button", class: "aa-statbtn", tabindex: "-1", title: "+1 (Shift: +10)", onclick: step(1) }, "+");
+		st = { wrap: h("span", { class: "aa-stat" }, minus, input, plus), input, minus, plus };
+		statSteppers.set(key, st);
+		return st;
+	}
+
+	function syncStatStepper(key) {
+		const sel = el(key);
+		const st = statSteppers.get(key);
+		if (!sel || !st) return;
+		const { min, max } = statRange(sel);
+		const v = Number(sel.value);
+		if (document.activeElement !== st.input) st.input.value = sel.value;
+		st.minus.disabled = !(v > min);
+		st.plus.disabled = !(v < max);
+	}
+
+	function updateStatSteppers() {
+		for (const key of STAT_KEYS) {
+			const sel = el(key);
+			if (!sel || sel.tagName !== "SELECT") continue;
+			const st = statStepper(key);
+			if (sel.previousElementSibling !== st.wrap) sel.before(st.wrap);
+			sel.classList.add("aa-hidden-select");
+			syncStatStepper(key);
+		}
+	}
+	updateStatSteppers();
 
 	function raiseStat(key) {
 		const sel = el(key);
