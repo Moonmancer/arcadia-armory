@@ -1344,6 +1344,8 @@
 	// changes the whole character or target, so a delta would say nothing).
 	const MONSTER_FIELD = { key: "B_Enemy", label: "Monster", short: "", monster: true, listOnly: true, refine: null, cards: [] };
 	const JOB_FIELD = { key: "A_JOB", label: "Class", short: "", listOnly: true, refine: null, cards: [] };
+	// Other names of classes (e.g. from other servers), searchable in the class field.
+	const JOB_ALIASES = { Scholar: ["Professor"], Minstrel: ["Clown"], Biochemist: ["Creator"], Whitesmith: ["Mastersmith"] };
 	// Created by the calculator only once "Additional Effects" is opened. Pets are
 	// never owned items, so every row gets its damage change (few entries).
 	const PET_FIELD = { key: "A8_Skill0", label: "Pet", short: "", noOwned: true, refine: null, cards: [] };
@@ -1783,7 +1785,9 @@
 			}
 		}
 		for (const r of rows) {
-			r.search = " " + searchNorm([r.name, r.group, r.subText ?? r.sub].join(" "));
+			const aliases = slot === JOB_FIELD ? JOB_ALIASES[r.name] : null;
+			if (aliases && !r.sub) r.sub = "auch: " + aliases.join(", ");
+			r.search = " " + searchNorm([r.name, r.group, r.subText ?? r.sub, ...(aliases || [])].join(" "));
 			r.variant = r.kind === "inst" ? variantFor(slot, r.id, r.inst) : SLOT_BY_KEY[slot.key] ? variantFor(slot, Number(r.value), null) : { [slot.key]: r.value };
 			r.current = slot.shortcut ? false : isCurrentVariant(r.variant);
 		}
@@ -3019,7 +3023,7 @@
 			const tokens = searchNorm(input.value).split(" ").filter(Boolean);
 			const all = getBuilds();
 			shown = all.filter((b) => {
-				const hay = " " + searchNorm(`${b.name} ${b.job}`);
+				const hay = " " + searchNorm(`${b.name} ${b.job} ${(JOB_ALIASES[b.job] || []).join(" ")}`);
 				return tokens.every((t) => hay.includes(" " + t) || hay.includes(t));
 			});
 			active = Math.min(active, Math.max(0, shown.length - 1));
