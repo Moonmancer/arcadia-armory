@@ -779,6 +779,7 @@
 	}
 
 	function refreshSelects() {
+		addLeftCardSets();
 		updateWoeHeaderToggle();
 		updateHeadShadows();
 		for (const { select } of slotSelects()) applyFilter(select);
@@ -1184,6 +1185,48 @@
 		invalidate();
 		refreshSelects();
 	}
+
+	// Extra card shortcuts in the calculator's own format ([name, card1..card4]),
+	// so Setm_CardShort / Setm_CardShortLeft apply them like the built-in ones.
+	const CARD_SETS = [
+		["Lizzy Set [Lizzi + Lizzie + Lizzy]", ["Lizzi", "Lizzie", "Lizzy"]], // slots 2-4, slot 1 is kept
+	];
+	const CARD_SET_ROWS = new Set(); // their indexes in m_CardShort
+
+	// The left hand list is rebuilt from the first 50 shortcuts whenever dual
+	// wield turns on, so the extra sets are appended again each time.
+	function addLeftCardSets() {
+		const left = el("A_cardshortLeft");
+		if (!left) return;
+		for (const i of CARD_SET_ROWS) if (!hasOption(left, i)) left.add(new Option(m_CardShort[i][0], i));
+	}
+
+	(function addCardSets() {
+		if (typeof m_CardShort === "undefined") return;
+		const select = el("A_cardshort");
+		for (const [name, cards] of CARD_SETS) {
+			const ids = cards.map((c) => (m_Card.find((x) => x[2] === c) || [])[0]);
+			if (ids.some((id) => id == null)) continue;
+			m_CardShort.push([name, 0, ...ids]);
+			CARD_SET_ROWS.add(m_CardShort.length - 1);
+			if (select) select.add(new Option(name, m_CardShort.length - 1));
+		}
+		addLeftCardSets();
+		// The calculator writes all four slots; for these sets keep the card in slot 1.
+		for (const [fn, field, first] of [
+			["Setm_CardShort", "A_cardshort", "A_weapon1_card1"],
+			["Setm_CardShortLeft", "A_cardshortLeft", "A_weapon2_card1"],
+		]) {
+			const orig = window[fn];
+			if (typeof orig !== "function") continue;
+			window[fn] = function (...args) {
+				const keep = CARD_SET_ROWS.has(Number((el(field) || {}).value)) && el(first) ? el(first).value : null;
+				const r = orig.apply(this, args);
+				if (keep != null) el(first).value = keep;
+				return r;
+			};
+		}
+	})();
 
 	(function addEquipSets() {
 		const select = el("A_cardshort");
