@@ -361,7 +361,7 @@
 	const DEFAULT_SETTINGS = {
 		onlyOwned: false, // hide non-owned items in the equipment selects
 		preview: "all", // "all" | "owned" | "off": damage preview in the dropdowns
-		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better)
+		metric: "dps", // "dps" | "hit" | "def" (damage received, lower is better) | "craft" (success rate)
 		combo: true, // replace the equipment selects with a search field
 		comboSort: "name", // "name" | "dmg": order of the search field's list
 		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
@@ -454,6 +454,7 @@
 	// "Average Dmg Received (w/dodge)" of the combat simulator, negated so that
 	// higher is better everywhere (sorting, optimizer, colors).
 	function measure() {
+		if (currentMetric() === "craft") return craftInfo().rate;
 		if (currentMetric() === "def") {
 			const cell = document.getElementById("B_Ave2Atk");
 			return -(Number(String(cell ? cell.textContent : "").replace(/[^\d.]/g, "")) || 0);
@@ -465,7 +466,54 @@
 	}
 
 	function metricUnit(metric) {
+		if (metric === "craft") return "% Erfolg (" + craftInfo().name + ")";
 		return { dps: "Schaden/Sek.", hit: "Schaden/Treffer", def: "erlittener Schaden" }[metric] || "";
+	}
+
+	// ---------------------------------------------------------------------------
+	// Crafting success (metric "craft")
+	// ---------------------------------------------------------------------------
+	//
+	// The calculator's formulas from "Other Info" (Forge/Potion/EDP Creation
+	// Success Rate, Cooking Success Rates), fed with the final stats of the last
+	// calc() run. Equipment only acts through DEX, LUK, INT and levels, so the
+	// rate is kept unclamped (no 0 % / 100 % cut) to still rank items. What is
+	// crafted follows "Other Info": Cooking there means cooking, otherwise the
+	// class decides (Blacksmith: forging, Alchemist: potions, Assassin Cross:
+	// Poison Bottle for EDP, everyone else: cooking). Inputs of the "Other Info"
+	// box (skill levels, anvil, potion, ...) are used when it shows them.
+	function craftInfo() {
+		const num = (name) => Number((el(name) || {}).value) || 0;
+		const dexLuk = n_A_DEX + n_A_LUK;
+		const adopted = form.A_adopted && form.A_adopted.checked;
+		const J = typeof JOBID !== "undefined" ? JOBID : {};
+		const other = num("A_Kakutyou");
+		if (other !== 30) {
+			if (n_A_JOB === J.BLACKSMITH || n_A_JOB === J.WHITESMITH) {
+				const anvil = typeof m_Anvil !== "undefined" && m_Anvil[num("A_KakutyouSelNum")];
+				const rate = 50 + 5 * num("A_SmithT") + num("A_WepR") + (el("A_KakutyouSelNum") && anvil ? anvil[1] : 0) + 0.2 * n_A_JobLV + 0.1 * dexLuk - 15 * num("A_StarC") - 20 * num("A_ElemS");
+				return { name: "Forging", rate: adopted ? 0.7 * rate : rate };
+			}
+			if (n_A_JOB === J.ALCHEMIST || n_A_JOB === J.CREATOR) {
+				const potion = typeof m_Potion !== "undefined" && el("A_KakutyouSelNum") && m_Potion[num("A_KakutyouSelNum")];
+				const rate = (100 * num("A_PotionRLevel") + 300 * num("A_PreparePLevel") + 20 * n_A_JobLV + 10 * dexLuk + 5 * n_A_INT + 100 * (potion ? potion[1] : 0) + 100 * num("A_Van")) / 100;
+				return { name: "Potion", rate: adopted ? 0.7 * rate : rate };
+			}
+			if (n_A_JOB === J.ASSASSIN_CROSS) return { name: "EDP (Poison Bottle)", rate: (200 + 4 * n_A_DEX + 2 * n_A_LUK) / 10 };
+		}
+		// Cooking, average case of the calculator (kit, food level and stat as chosen there).
+		const lv = num("Flv");
+		const stat = num("FStat");
+		let items = 1;
+		if (lv === 1 && stat === 4) items = 2;
+		if ((lv === 1 && stat !== 4) || (lv === 2 && stat === 4) || (lv === 3 && stat === 4)) items = 3;
+		if ((lv === 2 && stat !== 4) || (lv === 3 && [2, 3, 6].includes(stat)) || (lv === 6 && stat === 2)) items = 4;
+		if ((lv === 3 && (stat === 1 || stat === 5)) || (lv === 4 && (stat !== 1 || stat !== 5)) || (lv === 5 && stat !== 5) || (lv === 6 && (stat !== 2 || stat !== 5)) || (lv === 7 && stat === 4)) items = 5;
+		if ((lv === 4 && (stat === 4 || stat === 5)) || (lv === 5 && stat === 5) || (lv === 6 && stat === 5) || (lv === 7 && stat !== 4) || (lv === 8 && stat !== 5)) items = 6;
+		if ((lv === 8 && stat === 5) || lv === 9) items = 7;
+		if (lv === 10) items = 8;
+		const power = 1200 * (num("CKit") + 1) + 20 * (n_A_BaseLV + 1) + 20 * n_A_DEX - 400 * lv - 10 * (100 - (n_A_LUK + 1)) - 500 * (items - 1);
+		return { name: "Cooking", rate: (power + 100 * (6 + Math.min(num("CExp"), 2e3) / 80 + 12) * (adopted ? 0.7 : 1)) / 100 };
 	}
 
 	// Measured value as shown to the user (damage received is stored negated).
@@ -679,6 +727,12 @@
 
 	function formatDelta(value, base, metric = currentMetric()) {
 		if (!Number.isFinite(value)) return "";
+		if (metric === "craft") {
+			// Success rate: change in percentage points.
+			const d = value - base;
+			if (Math.abs(d) < 0.005) return "±0";
+			return (d > 0 ? "▲ +" : "▼ −") + Math.abs(d).toFixed(2) + " %P";
+		}
 		if (metric === "def") {
 			// Change of the damage received; ▲ = less damage (better).
 			const now = -base;
@@ -1966,7 +2020,8 @@
 				{ class: "aa-header-metric", onchange: (e) => applySetting("metric", e.target.value) },
 				h("option", { value: "dps" }, "Ø Schaden/Sek."),
 				h("option", { value: "hit" }, "Ø Schaden/Treffer"),
-				h("option", { value: "def" }, "Ø erlittener Schaden")
+				h("option", { value: "def" }, "Ø erlittener Schaden"),
+				h("option", { value: "craft", title: "Forging, Potions, EDP (Poison Bottle) oder Cooking – je nach Klasse bzw. „Other Info“" }, "Herstellungs-Erfolg")
 			)
 		)
 	);
@@ -2024,7 +2079,8 @@
 					{ onchange: (e) => set("metric", e.target.value) },
 					h("option", { value: "dps", selected: s.metric === "dps" }, "Ø Schaden / Sekunde"),
 					h("option", { value: "hit", selected: s.metric === "hit" }, "Ø Schaden / Treffer"),
-					h("option", { value: "def", selected: s.metric === "def" }, "Ø erlittener Schaden (Verteidigung)")
+					h("option", { value: "def", selected: s.metric === "def" }, "Ø erlittener Schaden (Verteidigung)"),
+					h("option", { value: "craft", selected: s.metric === "craft" }, "Herstellungs-Erfolg (Forging / Potion / EDP / Cooking)")
 				)
 			)
 		);
@@ -2273,7 +2329,8 @@
 				{ class: "aa-row" },
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Sekunde an", onclick: run("dps") }, "Beste DPS anlegen"),
 				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit dem höchsten Ø Schaden pro Treffer an", onclick: run("hit") }, "Bester Einzelschaden anlegen"),
-				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare an, mit denen du vom gewählten Monster am wenigsten Schaden erleidest (Combat Simulator, inkl. Ausweichen)", onclick: run("def") }, "Beste Verteidigung anlegen")
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare an, mit denen du vom gewählten Monster am wenigsten Schaden erleidest (Combat Simulator, inkl. Ausweichen)", onclick: run("def") }, "Beste Verteidigung anlegen"),
+				h("button", { type: "button", class: "aa-btn aa-primary", disabled: !state.items.length, title: "Legt deine Exemplare mit der höchsten Erfolgschance an: Forging, Potions, EDP oder Cooking – je nach Klasse bzw. „Other Info“", onclick: run("craft") }, "Beste Herstellung anlegen")
 			),
 			o
 				? h(
