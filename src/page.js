@@ -419,7 +419,13 @@
 	// Damage simulation using the calculator's own engine
 	// ---------------------------------------------------------------------------
 
-	const origCalc = window.calc;
+	const rawCalc = window.calc;
+	// Every calculation, also the simulated ones, ends with the two-hand shield lock.
+	const origCalc = function () {
+		const r = rawCalc.apply(this, arguments);
+		lockShield();
+		return r;
+	};
 	const origStAllCalc = window.StAllCalc;
 	let simulating = false;
 	let applying = false; // set while the panel equips an exact instance
@@ -431,6 +437,7 @@
 	}
 
 	window.calc = function () {
+		if (!simulating) enforceTwoHand();
 		const r = origCalc.apply(this, arguments);
 		if (!simulating) {
 			invalidate();
@@ -439,10 +446,33 @@
 		return r;
 	};
 	window.StAllCalc = function () {
+		if (!simulating) enforceTwoHand();
 		const r = origStAllCalc.apply(this, arguments);
+		lockShield();
 		if (!simulating) invalidate();
 		return r;
 	};
+
+	// calc() enables the shield fields every time (its own two-hand rule is
+	// switched off), so they are locked again after each calculation while a
+	// two-handed weapon is worn; only our own lock is ever undone.
+	function lockShield() {
+		const shield = SLOT_BY_KEY.A_left;
+		const two = twoHandedNow() && !(typeof n_Nitou !== "undefined" && n_Nitou);
+		for (const k of [shield.key, shield.refine, ...shield.cards]) {
+			const sel = el(k);
+			if (!sel) continue;
+			if (two) {
+				sel.disabled = true;
+				sel.dataset.aaTwoHand = "1";
+				sel.title = "Zweihändige Waffe: kein Schild möglich";
+			} else if (sel.dataset.aaTwoHand) {
+				sel.disabled = false;
+				delete sel.dataset.aaTwoHand;
+				sel.removeAttribute("title");
+			}
+		}
+	}
 
 	let metricOverride = null; // "dps" | "hit" | "def" while the optimizer runs
 
@@ -621,8 +651,47 @@
 	// included even if their select doesn't exist yet (left hand before dual
 	// wielding is enabled); simulate() skips values a select can't take.
 	// Head slots covered by a multi-slot headgear are emptied as well.
+	// ---------------------------------------------------------------------------
+	// Two-handed weapons: no shield
+	// ---------------------------------------------------------------------------
+	//
+	// The calculator has this rule (restrictEquipslot) but it is switched off on
+	// Arcadia. Weapon types as there: two-handed sword / spear / axe, bow, katar,
+	// Huuma shuriken, guns, plus staves with the "two-handed" effect (195).
+	const TWO_HAND_TYPES = new Set([3, 5, 7, 10, 11, 16, 17, 18, 19, 20, 21]);
+
+	function isTwoHanded(calcId) {
+		const item = m_Item[calcId];
+		if (!item || item[1] < 1 || item[1] > 21) return false;
+		if (TWO_HAND_TYPES.has(item[1])) return true;
+		for (let i = 11; i + 1 < item.length && item[i] !== 0; i += 2) if (item[i] === 195) return true;
+		return false;
+	}
+
+	const twoHandedNow = () => Boolean(el("A_weapon1")) && isTwoHanded(Number(el("A_weapon1").value));
+
+	// Shield slot emptied (item, refine, card) for a two-handed weapon.
+	function shieldCleared() {
+		const v = {};
+		const shield = SLOT_BY_KEY.A_left;
+		const sel = el(shield.key);
+		const none = sel && noneValue(sel);
+		if (none == null) return v;
+		v[shield.key] = none;
+		if (el(shield.refine)) v[shield.refine] = "0";
+		for (const c of shield.cards) if (el(c)) v[c] = "0";
+		return v;
+	}
+
+	// Before each real calculation: a two-handed weapon takes the shield off
+	// (e.g. picked in the calculator's own list or loaded from a build).
+	function enforceTwoHand() {
+		if (!twoHandedNow()) return;
+		for (const [k, value] of Object.entries(shieldCleared())) if (el(k).value !== value) el(k).value = value;
+	}
+
 	function variantFor(slot, calcId, inst) {
-		const v = { ...headConflicts(slot.key, headMask(calcId, inst)), [slot.key]: String(calcId) };
+		const v = { ...headConflicts(slot.key, headMask(calcId, inst)), ...(slot.key === "A_weapon1" && isTwoHanded(calcId) ? shieldCleared() : {}), [slot.key]: String(calcId) };
 		if (inst) {
 			if (slot.refine) v[slot.refine] = String(inst.refine);
 			slot.cards.forEach((name, i) => {
@@ -1224,6 +1293,7 @@
 			const keys = item[1] >= 1 && item[1] <= 21 ? ["A_weapon1", "A_weapon2"] : SLOT_FOR_TYPE[item[1]] || [];
 			const key = keys.find((k) => !used.has(k) && el(k) && hasOption(el(k), item[0]));
 			if (!key) continue;
+			if (key === "A_left" && twoHandedNow() && !set.items.some((n) => { const w = m_Item.find((i) => i[8] === n); return w && w[1] >= 1 && w[1] <= 21 && !isTwoHanded(w[0]); })) continue;
 			used.add(key);
 			const slot = SLOT_BY_KEY[key];
 			const best = state.settings.applyInstance ? evaluateOwned(slot, item[0]) : null;
@@ -2242,6 +2312,8 @@
 			}
 			if (plan.length !== parts.length) continue;
 			if (plan.every((p) => el(p.key).value === String(p.id))) continue;
+			const weapon = plan.find((p) => p.key === "A_weapon1");
+			if (plan.some((p) => p.key === "A_left") && (weapon ? isTwoHanded(weapon.id) : twoHandedNow())) continue;
 			plans.push(plan);
 		}
 		return plans;
@@ -2263,6 +2335,7 @@
 				for (const key of OPT_ORDER) {
 					const select = el(key);
 					if (!select || select.tagName !== "SELECT") continue;
+					if (key === "A_left" && twoHandedNow()) continue; // no shield with a two-handed weapon
 					const slot = SLOT_BY_KEY[key];
 					// Copies still available: never wear one copy more often than owned.
 					const usedElsewhere = (inst) => [...chosen].filter(([k, i]) => k !== key && i.uid === inst.uid).length;
