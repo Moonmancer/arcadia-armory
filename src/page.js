@@ -3053,12 +3053,39 @@
 		return { possible, active: possible ? ENSEMBLES.filter((e) => state.settings.partyEnsembles.includes(e.key)) : [] };
 	}
 
-	// The Party-Battle's monster attack (Enemy Attack Skill) on the loaded build.
-	function applyMonsterAtk() {
+	// Monster attack the Party-Battle uses: its own choice or the calculator's.
+	function partyAtkNow() {
 		const v = state.settings.partyMonsterAtk;
 		const sel = form.B_AtkSkill;
-		if (v == null || !sel || !hasOption(sel, v)) return;
-		sel.value = String(v);
+		if (v != null && sel && hasOption(sel, v)) return String(v);
+		return sel ? sel.value : null;
+	}
+
+	// Sets the monster attack like the calculator's own list does: some attacks
+	// need an extra field (e.g. "Players in Range" for Brandish Spear) that
+	// BClickAtkSkill() creates; its closing calc() is skipped here.
+	function setMonsterAtk(value, subValue) {
+		const sel = form.B_AtkSkill;
+		if (!sel || value == null || !hasOption(sel, value)) return;
+		if (sel.value === String(value) && (subValue == null || !form.BSkillSubNum)) return;
+		sel.value = String(value);
+		if (typeof BClickAtkSkill === "function") {
+			const calcFn = window.calc;
+			window.calc = () => {};
+			try {
+				BClickAtkSkill();
+			} finally {
+				window.calc = calcFn;
+			}
+		}
+		if (subValue != null && form.BSkillSubNum && "value" in form.BSkillSubNum) form.BSkillSubNum.value = subValue;
+	}
+
+	// The Party-Battle's monster attack on the loaded build (a build brings the
+	// attack it was saved with; "as in the calculator" = the one chosen there).
+	let partyAtk = { value: null, sub: null };
+	function applyMonsterAtk() {
+		setMonsterAtk(partyAtk.value, partyAtk.sub);
 	}
 
 	// Damage taken by the loaded build (after the last calculation).
@@ -3072,6 +3099,10 @@
 		const members = partyMembers();
 		const current = captureBuild();
 		const atkBefore = form.B_AtkSkill ? form.B_AtkSkill.value : null;
+		const subBefore = form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
+		pb.atk = partyAtkNow();
+		pb.pending = false;
+		partyAtk = { value: pb.atk, sub: state.settings.partyMonsterAtk == null ? subBefore : null };
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const cacheSkills = (m) => {
@@ -3133,7 +3164,7 @@
 		} finally {
 			loadBuildCode(current);
 			if (form.B_AtkSkill && atkBefore != null && form.B_AtkSkill.value !== atkBefore) {
-				form.B_AtkSkill.value = atkBefore;
+				setMonsterAtk(atkBefore, subBefore);
 				window.calc();
 			}
 			formObserver.takeRecords();
@@ -3164,10 +3195,12 @@
 
 	// Loads the member as calculated here: its skill and the songs the others play.
 	function loadPartyMember(m) {
+		const atk = partyAtkNow();
+		const sub = state.settings.partyMonsterAtk == null && form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
 		loadBuildCode(m.b.code);
 		applyPartySkill(m.skill);
 		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid), partyEnsembleState().active);
-		applyMonsterAtk();
+		setMonsterAtk(atk, sub);
 		window.calc();
 	}
 
@@ -3185,6 +3218,12 @@
 		if (members.length && !pb.autoRan && !simulating) {
 			pb.autoRan = true;
 			setTimeout(evaluateParty, 0); // after a reload: skill lists and values
+		}
+		// Another monster or monster attack (e.g. picked in the calculator's own
+		// list): the values are outdated, calculate again right away.
+		if (members.length && pb.results.size && !pb.pending && !simulating && (pb.atk !== partyAtkNow() || pb.enemy !== (form.B_Enemy ? form.B_Enemy.value : null))) {
+			pb.pending = true;
+			setTimeout(evaluateParty, 0);
 		}
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const stale = members.length > 0 && (pb.enemy !== enemy || members.some((m) => !pb.results.has(m.uid)));
