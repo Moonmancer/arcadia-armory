@@ -3,8 +3,9 @@
 #   python package.py
 #
 # Legt build/ mit genau den Dateien an, die ins Addon gehoeren, und packt sie
-# zu arcadia-armory.xpi. build/ dient ausserdem als Eingabe fuer den Linter,
-# damit der genau das prueft, was auch hochgeladen wird:
+# zu dist/<version>/arcadia-armory-<version>-unsigned.xpi (die Datei, die bei
+# addons.mozilla.org hochgeladen wird). build/ dient ausserdem als Eingabe fuer
+# den Linter, damit der genau das prueft, was auch hochgeladen wird:
 #
 #   npx web-ext lint --source-dir build --self-hosted
 #
@@ -29,7 +30,7 @@ FILES = [
     "src/cp.css",
 ]
 BUILD = "build"
-XPI = "arcadia-armory.xpi"
+DIST = "dist"
 
 here = os.path.dirname(os.path.abspath(__file__))
 os.chdir(here)
@@ -47,6 +48,11 @@ for cs in manifest.get("content_scripts", []):
 missing = sorted(referenced - set(FILES))
 if missing:
     raise SystemExit("im Manifest referenziert, aber nicht in FILES: " + ", ".join(missing))
+
+# dist/<version>/ haelt beide Fassungen einer Version: -unsigned (hier gebaut)
+# und die von Mozilla signierte (release.py legt sie dazu).
+XPI = os.path.join(DIST, manifest["version"], "arcadia-armory-%s-unsigned.xpi" % manifest["version"])
+os.makedirs(os.path.dirname(XPI), exist_ok=True)
 
 shutil.rmtree(BUILD, ignore_errors=True)
 for f in FILES:
@@ -66,5 +72,6 @@ print()
 print("%s: %d Bytes" % (XPI, len(data)))
 print("sha256: %s" % hashlib.sha256(data).hexdigest())
 print()
-print("Naechster Schritt:")
+print("Naechste Schritte:")
 print("  npx web-ext lint --source-dir %s --self-hosted" % BUILD)
+print("  %s bei addons.mozilla.org hochladen" % XPI.replace(os.sep, "/"))

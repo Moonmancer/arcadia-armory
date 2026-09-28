@@ -73,18 +73,30 @@ signiert – es bleibt privat, die Prüfung ist automatisiert und dauert meist n
 
 3. Auf [addons.mozilla.org/developers](https://addons.mozilla.org/developers/) anmelden, **Submit a New
    Add-on** (bzw. bei Updates **Upload New Version**), als Kanal **On your own** wählen.
-4. `arcadia-armory.xpi` hochladen. Die Frage nach dem Quellcode mit **nein** beantworten – nichts ist
+4. `dist/<version>/arcadia-armory-<version>-unsigned.xpi` hochladen. Die Frage nach dem Quellcode mit **nein** beantworten – nichts ist
    minifiziert oder gebündelt (`woe-blacklist.js` und `theme-armory.css` sind lesbar generiert).
-5. Die signierte `.xpi` unter **Manage My Submissions → Versions** herunterladen.
+5. Die signierte `.xpi` unter **Manage My Submissions → Versions** herunterladen (Downloads-Ordner,
+   Projektordner oder `dist/<version>/` – der Dateiname ist egal).
 6. Signierte Fassung veröffentlichen, damit Firefox das Update findet (erster Aufruf = Probelauf):
 
    ```bash
-   python release.py ~/Downloads/arcadia_armory-1.0.0.xpi
-   python release.py ~/Downloads/arcadia_armory-1.0.0.xpi --publish
+   python release.py
+   python release.py --publish
    ```
 
-   `release.py` prüft Signatur, Id und Version, legt das GitHub-Release an, trägt Link und sha256 in
-   `updates.json` ein und pusht sie. `manifest.json` → `update_url` → `updates.json` → Release-Asset.
+   `release.py` sucht die signierte Datei zur Version aus `manifest.json`, prüft Signatur, Id und Version,
+   legt sie als `dist/<version>/arcadia-armory-<version>.xpi` ab, legt das GitHub-Release an, trägt Link
+   und sha256 in `updates.json` ein und pusht sie. `manifest.json` → `update_url` → `updates.json` →
+   Release-Asset.
+
+Lokales Archiv (nicht im Repo, öffentlich liegen die signierten Dateien in den GitHub-Releases):
+
+```
+dist/
+  1.0.0/  arcadia-armory-1.0.0.xpi                    signiert
+  1.1.0/  arcadia-armory-1.1.0-unsigned.xpi           gebaut, bei AMO hochgeladen
+          arcadia-armory-1.1.0.xpi                    signiert (nach release.py)
+```
 
 | Manifest | Wert | Warum |
 | --- | --- | --- |
@@ -104,7 +116,7 @@ signiert – es bleibt privat, die Prüfung ist automatisiert und dauert meist n
   `tools/update_woe_blacklist.py`
 - `src/headgear-slots.js` – Headgears, die mehrere Kopf-Slots belegen (z. B. Mythical Lion Mask = Upper +
   Middle), aus der Item-Datenbank des Control Panels: `python tools/update_headgear_slots.py`
-- `package.py`, `release.py` – Paket bauen bzw. signierte Fassung veröffentlichen
+- `package.py`, `release.py` – Paket nach `dist/<version>/` bauen bzw. signierte Fassung veröffentlichen
 
 ## Grenzen
 

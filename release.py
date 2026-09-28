@@ -1,17 +1,24 @@
 # Veroeffentlicht eine von Mozilla signierte .xpi als GitHub-Release und
 # traegt sie in updates.json ein, damit Firefox das Update automatisch findet.
 #
-#   python release.py ~/Downloads/arcadia_armory-1.0.0.xpi
-#   python release.py ~/Downloads/arcadia_armory-1.0.0.xpi --publish
+#   python release.py                 Probelauf
+#   python release.py --publish       veroeffentlichen
+#   python release.py <datei> ...     bestimmte signierte Datei verwenden
+#
+# Ohne Dateiangabe sucht das Skript die signierte .xpi der Version aus
+# manifest.json selbst: in dist/<version>/, im Projektordner und im
+# Downloads-Ordner (der Dateiname von AMO ist egal, geprueft werden Id,
+# Version und Signatur). Sie landet als dist/<version>/arcadia-armory-<version>.xpi
+# neben der unsignierten Fassung von package.py.
 #
 # Ohne --publish passiert nichts nach aussen: das Skript prueft die Datei,
 # schreibt dist/ und updates.json und zeigt, was es tun wuerde.
 #
 # Reihenfolge im Gesamtablauf:
-#   1. python package.py                      Paket bauen
+#   1. python package.py                      Paket bauen (dist/<version>/...-unsigned.xpi)
 #   2. bei addons.mozilla.org hochladen       signieren lassen
 #   3. signierte .xpi herunterladen
-#   4. python release.py <datei> --publish    veroeffentlichen
+#   4. python release.py --publish            veroeffentlichen
 import argparse
 import hashlib
 import json
@@ -61,9 +68,34 @@ def read_manifest_from_xpi(path):
         return json.loads(z.read("manifest.json").decode("utf-8")), signed
 
 
+def find_signed(version, addon_id):
+    """Neueste signierte .xpi dieser Version/Id in dist/<version>/, im
+    Projektordner oder im Downloads-Ordner."""
+    dirs = [os.path.join(DIST, version), HERE, os.path.join(os.path.expanduser("~"), "Downloads")]
+    found = []
+    for d in dirs:
+        if not os.path.isdir(d):
+            continue
+        for name in os.listdir(d):
+            path = os.path.join(d, name)
+            if not name.endswith(".xpi") or name.endswith("-unsigned.xpi") or not os.path.isfile(path):
+                continue
+            try:
+                m, signed = read_manifest_from_xpi(path)
+            except (zipfile.BadZipFile, SystemExit, KeyError, ValueError):
+                continue
+            gid = m.get("browser_specific_settings", {}).get("gecko", {}).get("id")
+            if signed and m.get("version") == version and gid == addon_id:
+                found.append(path)
+    if not found:
+        fail("keine signierte .xpi fuer Version %s gefunden (gesucht in: %s)"
+             % (version, ", ".join(dirs)))
+    return max(found, key=os.path.getmtime)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("xpi", help="die von Mozilla signierte .xpi")
+    ap.add_argument("xpi", nargs="?", help="die von Mozilla signierte .xpi (sonst wird gesucht)")
     ap.add_argument("--publish", action="store_true",
                     help="Release wirklich anlegen und updates.json pushen")
     ap.add_argument("--allow-unsigned", action="store_true",
@@ -71,12 +103,15 @@ def main():
     args = ap.parse_args()
     os.chdir(HERE)
 
+    with open("manifest.json", encoding="utf-8") as fh:
+        local = json.load(fh)
+    if not args.xpi:
+        args.xpi = find_signed(local["version"], local["browser_specific_settings"]["gecko"]["id"])
+        print("gefunden : %s" % args.xpi)
     if not os.path.isfile(args.xpi):
         fail("Datei nicht gefunden: " + args.xpi)
 
     signed_manifest, is_signed = read_manifest_from_xpi(args.xpi)
-    with open("manifest.json", encoding="utf-8") as fh:
-        local = json.load(fh)
 
     gecko = local["browser_specific_settings"]["gecko"]
     addon_id = gecko["id"]
@@ -99,9 +134,12 @@ def main():
     tag = "v" + version
     asset = "arcadia-armory-%s.xpi" % version
 
-    os.makedirs(DIST, exist_ok=True)
-    target = os.path.join(DIST, asset)
-    shutil.copy2(args.xpi, target)
+    # dist/<version>/ haelt beide Fassungen: -unsigned (package.py) und signiert.
+    target_dir = os.path.join(DIST, version)
+    os.makedirs(target_dir, exist_ok=True)
+    target = os.path.join(target_dir, asset)
+    if os.path.abspath(args.xpi) != os.path.abspath(target):
+        shutil.copy2(args.xpi, target)
     digest = hashlib.sha256(open(target, "rb").read()).hexdigest()
     link = "https://github.com/%s/releases/download/%s/%s" % (slug, tag, asset)
 
