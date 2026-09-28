@@ -475,5 +475,6 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbsupport td { font-style: italic; }
 .aa-pbopts { gap: 14px; }
 .aa-pbatk { max-width: 260px; }
+.aa-pbeq { width: 48px; }
 .aa-pbens label { margin-right: 10px; white-space: nowrap; }
 .aa-pbsongs { margin-top: 2px; }

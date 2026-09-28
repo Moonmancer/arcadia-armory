@@ -371,6 +371,7 @@
 		party: [], // "Party-Battle" members: { uid, build, skill } (skill null = the build's own)
 		partyEnsembles: [], // ENSEMBLES keys switched on in the Party-Battle
 		partyMonsterAtk: null, // B_AtkSkill value for the Party-Battle (null = as in the calculator)
+		partyEqPlayers: null, // "Players in Range" for Earth Quake in the Party-Battle (null = party size)
 		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
 		applyInstance: true, // apply refine + cards of an owned item on selection
 		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
@@ -3142,7 +3143,8 @@
 	function setMonsterAtk(value, subValue) {
 		const sel = form.B_AtkSkill;
 		if (!sel || value == null || !hasOption(sel, value)) return;
-		if (sel.value === String(value) && (subValue == null || !form.BSkillSubNum)) return;
+		const sub = form.BSkillSubNum;
+		if (sel.value === String(value) && (subValue == null || (sub && "value" in sub && String(sub.value) === String(subValue)))) return;
 		sel.value = String(value);
 		if (typeof BClickAtkSkill === "function") {
 			const calcFn = window.calc;
@@ -3154,6 +3156,22 @@
 			}
 		}
 		if (subValue != null && form.BSkillSubNum && "value" in form.BSkillSubNum) form.BSkillSubNum.value = subValue;
+	}
+
+	// Earth Quake (melee / ranged) splits its damage over the players in range.
+	const EARTHQUAKE = new Set(["444", "445"]);
+
+	// "Players in Range" for Earth Quake: own value or the number of members
+	// (performers count, they are hit as well).
+	function partyEqPlayers() {
+		const n = state.settings.partyEqPlayers ?? state.settings.party.filter((m) => state.builds.some((b) => b.id === m.build)).length;
+		return String(Math.max(1, Math.min(99, Math.round(Number(n)) || 1)));
+	}
+
+	// Value of the monster attack's extra field for the Party-Battle.
+	function partyAtkSub(atk, calcSub) {
+		if (EARTHQUAKE.has(String(atk))) return partyEqPlayers();
+		return state.settings.partyMonsterAtk == null ? calcSub : null;
 	}
 
 	// The Party-Battle's monster attack on the loaded build (a build brings the
@@ -3177,7 +3195,8 @@
 		const subBefore = form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
 		pb.atk = partyAtkNow();
 		pb.pending = false;
-		partyAtk = { value: pb.atk, sub: state.settings.partyMonsterAtk == null ? subBefore : null };
+		partyAtk = { value: pb.atk, sub: partyAtkSub(pb.atk, subBefore) };
+		pb.eq = EARTHQUAKE.has(String(pb.atk)) ? partyAtk.sub : null;
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const cacheSkills = (m) => {
@@ -3271,7 +3290,7 @@
 	// Loads the member as calculated here: its skill and the songs the others play.
 	function loadPartyMember(m) {
 		const atk = partyAtkNow();
-		const sub = state.settings.partyMonsterAtk == null && form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
+		const sub = partyAtkSub(atk, form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null);
 		loadBuildCode(m.b.code);
 		applyPartySkill(m.skill);
 		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid), partyEnsembleState().active);
@@ -3302,7 +3321,7 @@
 		}
 		// Another monster or monster attack (e.g. picked in the calculator's own
 		// list): the values are outdated, calculate again right away.
-		if (members.length && pb.results.size && !pb.pending && !simulating && (pb.atk !== partyAtkNow() || pb.enemy !== (form.B_Enemy ? form.B_Enemy.value : null))) {
+		if (members.length && pb.results.size && !pb.pending && !simulating && (pb.atk !== partyAtkNow() || pb.enemy !== (form.B_Enemy ? form.B_Enemy.value : null) || (pb.eq != null && pb.eq !== partyEqPlayers()))) {
 			pb.pending = true;
 			setTimeout(evaluateParty, 0);
 		}
@@ -3333,6 +3352,25 @@
 				atkSel ? [...atkSel.options].map((o) => h("option", { value: o.value, selected: state.settings.partyMonsterAtk === o.value }, o.text.trim())) : null
 			)
 		);
+		// Earth Quake: players in range, preset to the party size.
+		const eqInput = h("input", {
+			type: "number",
+			class: "aa-pbeq",
+			min: "1",
+			max: "99",
+			placeholder: String(members.length),
+			value: state.settings.partyEqPlayers ?? "",
+			title: "Leer = Anzahl der Party-Mitglieder. Mehr eintragen, wenn weitere Spieler im Bereich stehen.",
+			onchange: (e) => {
+				const v = e.target.value.trim();
+				state.settings.partyEqPlayers = v === "" ? null : Math.max(1, Math.min(99, Math.round(Number(v)) || 1));
+				save();
+				evaluateParty();
+			},
+		});
+		const eqPlayers = EARTHQUAKE.has(String(partyAtkNow()))
+			? h("label", { title: "Earth Quake teilt seinen Schaden auf alle Spieler im Bereich auf" }, "Spieler im Bereich: ", eqInput, h("span", { class: "aa-dim" }, state.settings.partyEqPlayers == null ? " (= Party)" : ""))
+			: "";
 		const ens = partyEnsembleState();
 		const ensembleToggles = h(
 			"span",
@@ -3437,7 +3475,7 @@
 						members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
 				  ),
-			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, ensembleToggles) : "",
+			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles) : "",
 			members.length
 				? h(
 						"div",
