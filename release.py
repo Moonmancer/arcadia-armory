@@ -20,20 +20,28 @@
 # Umgebungsvariablen WEB_EXT_API_KEY / WEB_EXT_API_SECRET, unter Windows
 # notfalls direkt aus den gespeicherten Benutzer-Variablen. Jede Version
 # laesst sich nur einmal signieren; liegt schon eine signierte Datei vor,
-# wird nicht erneut signiert.
+# wird nicht erneut signiert. Ist die Version bei AMO schon eingereicht
+# (auch von Hand hochgeladen), laedt --sign die signierte Datei ueber die API
+# nach dist/<version>/ (sha256 wird gegen AMO geprueft).
 #
 # Reihenfolge im Gesamtablauf:
 #   1. version in manifest.json erhoehen
 #   2. python release.py --sign               bauen, signieren, Probelauf
 #   3. python release.py --publish            veroeffentlichen
 import argparse
+import base64
 import hashlib
+import hmac
 import json
 import os
 import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
+import uuid
 import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -99,8 +107,66 @@ def api_credentials():
     return creds
 
 
+AMO_API = "https://addons.mozilla.org/api/v5"
+
+
+def amo_request(url, creds):
+    """GET gegen die AMO-API mit kurzlebigem JWT (HS256)."""
+    def b64(data):
+        return base64.urlsafe_b64encode(data).rstrip(b"=")
+    now = int(time.time())
+    head = b64(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    claims = {"iss": creds["WEB_EXT_API_KEY"], "jti": str(uuid.uuid4()), "iat": now, "exp": now + 60}
+    body = b64(json.dumps(claims).encode())
+    sig = b64(hmac.new(creds["WEB_EXT_API_SECRET"].encode(), head + b"." + body, hashlib.sha256).digest())
+    token = (head + b"." + body + b"." + sig).decode()
+    req = urllib.request.Request(url, headers={"Authorization": "JWT " + token, "User-Agent": "ArcadiaArmory release.py"})
+    return urllib.request.urlopen(req, timeout=60)
+
+
+def amo_version(version, addon_id, creds):
+    """Die Version bei AMO (auch unlisted) oder None, wenn sie nicht eingereicht ist."""
+    url = "%s/addons/addon/%s/versions/?filter=all_with_unlisted&page_size=50" % (AMO_API, addon_id)
+    try:
+        with amo_request(url, creds) as r:
+            data = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 404:  # Add-on noch nie eingereicht
+            return None
+        raise
+    return next((v for v in data.get("results", []) if v.get("version") == version), None)
+
+
+def fetch_signed(version, addon_id, creds):
+    """Laedt die signierte Datei einer bei AMO eingereichten Version nach
+    dist/<version>/. True, wenn sie jetzt dort liegt; False, wenn die Version
+    bei AMO nicht existiert."""
+    v = amo_version(version, addon_id, creds)
+    if not v:
+        return False
+    f = v.get("file") or {}
+    if f.get("status") != "public" or not f.get("url"):
+        fail("Version %s ist bei AMO eingereicht, aber noch nicht signiert (Status: %s).\n"
+             "  Spaeter noch einmal mit --sign versuchen." % (version, f.get("status")))
+    target = os.path.join(DIST, version, "arcadia-armory-%s.xpi" % version)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    print("signierte Datei von AMO laden:")
+    print("  " + f["url"])
+    with amo_request(f["url"], creds) as r:
+        data = r.read()
+    expected = (f.get("hash") or "").replace("sha256:", "")
+    digest = hashlib.sha256(data).hexdigest()
+    if expected and digest != expected:
+        fail("Download beschaedigt: sha256 %s statt %s" % (digest, expected))
+    with open(target, "wb") as fh:
+        fh.write(data)
+    print("  -> %s (%d Bytes)" % (target, len(data)))
+    return True
+
+
 def sign(version, addon_id):
-    """Baut das Paket und laesst build/ bei AMO als unlisted signieren."""
+    """Holt die signierte Datei von AMO, wenn die Version dort schon
+    eingereicht ist; sonst Paket bauen und build/ als unlisted signieren."""
     try:
         existing = find_signed(version, addon_id)
     except SystemExit:
@@ -109,6 +175,8 @@ def sign(version, addon_id):
         print("schon signiert: %s - ueberspringe das Signieren" % existing)
         return
     creds = api_credentials()
+    if fetch_signed(version, addon_id, creds):
+        return
     npx = shutil.which("npx")
     if not npx:
         fail("npx nicht gefunden - Node.js installieren")

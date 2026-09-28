@@ -72,7 +72,8 @@ signiert – es bleibt privat, die Prüfung ist automatisiert und dauert meist n
    ```
 
 3. Signieren lassen und Probelauf – `--sign` baut das Paket und reicht `build/` über die AMO-API als
-   unlisted ein, die signierte Datei landet in `dist/<version>/`:
+   unlisted ein, die signierte Datei landet in `dist/<version>/`. Ist die Version bei AMO schon eingereicht
+   (z. B. von Hand hochgeladen), lädt `--sign` nur die signierte Datei herunter:
 
    ```bash
    python release.py --sign
