@@ -476,5 +476,6 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbopts { gap: 14px; }
 .aa-pbatk { max-width: 260px; }
 .aa-pbeq { width: 48px; }
+.aa-pbstart { width: 46px; text-align: right; }
 .aa-pbens label { margin-right: 10px; white-space: nowrap; }
 .aa-pbsongs { margin-top: 2px; }

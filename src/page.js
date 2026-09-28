@@ -368,7 +368,7 @@
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
 		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
-		party: [], // "Party-Battle" members: { uid, build, skill } (skill null = the build's own)
+		party: [], // "Party-Battle" members: { uid, build, skill, start } (skill null = the build's own; start = attacks from this % of the monster's HP, default 100)
 		partyEnsembles: [], // ENSEMBLES keys switched on in the Party-Battle
 		partyMonsterAtk: null, // B_AtkSkill value for the Party-Battle (null = as in the calculator)
 		partyEqPlayers: null, // "Players in Range" for Earth Quake in the Party-Battle (null = party size)
@@ -3298,6 +3298,36 @@
 		window.calc();
 	}
 
+	// Fight with late starters: a member attacks once the monster's HP is at or
+	// below its start %. Between two start marks only the members already in
+	// deal damage. Returns the kill time, each member's damage and start time.
+	function partyFight(entries, hp) {
+		const cuts = [...new Set(entries.map((e) => e.start).filter((x) => x > 0 && x < 100))].sort((a, b) => b - a);
+		cuts.push(0);
+		const dealt = new Map(entries.map((e) => [e.uid, 0]));
+		const startAt = new Map();
+		let cur = 100;
+		let t = 0;
+		for (const next of cuts) {
+			const active = entries.filter((e) => e.start >= cur && e.dps > 0);
+			const dps = active.reduce((sum, e) => sum + e.dps, 0);
+			if (!(dps > 0)) return { time: Infinity, dealt, startAt, stuckAt: cur };
+			for (const e of active) if (!startAt.has(e.uid)) startAt.set(e.uid, t);
+			const dt = ((cur - next) / 100) * hp / dps;
+			for (const e of active) dealt.set(e.uid, dealt.get(e.uid) + e.dps * dt);
+			t += dt;
+			cur = next;
+		}
+		return { time: t, dealt, startAt };
+	}
+
+	function setPartyStart(uid, value) {
+		const v = Math.max(1, Math.min(100, Math.round(Number(value)) || 100));
+		state.settings.party = state.settings.party.map((m) => (m.uid === uid ? { ...m, start: v } : m));
+		save();
+		renderParty(); // no recalculation needed: only the timeline changes
+	}
+
 	function formatDuration(sec) {
 		if (!Number.isFinite(sec)) return "–";
 		if (sec < 60) return sec.toFixed(1) + " s";
@@ -3331,7 +3361,13 @@
 		const known = members.map((m) => pb.results.get(m.uid)).filter(Boolean);
 		const total = known.reduce((sum, r) => sum + r.dps, 0);
 		const hp = pb.hp || (typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0);
-		const ttk = total > 0 ? hp / total : Infinity;
+		const startOf = (m) => m.start ?? 100;
+		const fight = partyFight(
+			members.filter((m) => pb.results.has(m.uid)).map((m) => ({ uid: m.uid, dps: pb.results.get(m.uid).dps, start: startOf(m) })),
+			hp
+		);
+		const ttk = fight.time;
+		const late = members.some((m) => startOf(m) < 100 && pb.results.get(m.uid) && pb.results.get(m.uid).dps > 0);
 
 		const atkSel = form.B_AtkSkill;
 		const monsterAtkSelect = h(
@@ -3403,8 +3439,9 @@
 			h("div", { class: "aa-pbmname" }, monster),
 			h("div", { class: "aa-dim" }, renderSub(monsterInfo(Number(enemy)).filter((p) => !/ HP$/.test(p.text)))),
 			stat("HP", hp ? hp.toLocaleString("en-US") : "–"),
-			stat("Party-DPS", total ? total.toFixed(1) : "–", "Summe der Ø Schaden/Sek. aller Mitglieder"),
-			stat("Zeit bis Kill", formatDuration(ttk), "HP ÷ Party-DPS"),
+			stat("Party-DPS", total ? total.toFixed(1) : "–", "Summe der Ø Schaden/Sek. aller Mitglieder (alle greifen an)"),
+			late ? stat("Ø Party-DPS", Number.isFinite(ttk) && ttk > 0 ? (hp / ttk).toFixed(1) : "–", "HP ÷ Zeit bis Kill – mit den späteren Einstiegen") : "",
+			stat("Zeit bis Kill", Number.isFinite(ttk) ? formatDuration(ttk) : fight.stuckAt != null && total > 0 ? `nie (bis ${fight.stuckAt} % greift keiner an)` : "–", late ? "abschnittsweise: zwischen zwei Einstiegen greifen nur die Mitglieder an, die schon dabei sind" : "HP ÷ Party-DPS"),
 			stat("Kills/Min.", Number.isFinite(ttk) && ttk > 0 ? (60 / ttk).toFixed(2) : "–", "ohne Laufwege und Respawn"),
 			stat("Mitglieder", String(members.length)),
 			pb.songs && pb.songs.length ? h("div", { class: "aa-dim aa-pbsongs" }, "♪ " + pb.songs.join(", ")) : "",
@@ -3430,14 +3467,29 @@
 					: null,
 				skills ? h("optgroup", { label: "Angriff" }, skills.options.map((o) => h("option", { value: o.value, selected: m.skill === o.value }, o.text))) : null
 			);
-			const share = r && total > 0 ? (r.dps / total) * 100 : 0;
+			const share = r && hp > 0 && Number.isFinite(ttk) ? ((fight.dealt.get(m.uid) || 0) / hp) * 100 : r && total > 0 ? (r.dps / total) * 100 : 0;
+			const startIn = h("input", {
+				type: "number",
+				class: "aa-pbstart",
+				min: "1",
+				max: "100",
+				value: String(startOf(m)),
+				title: "Greift erst an, wenn das Monster höchstens so viel % seiner HP hat (100 = von Anfang an)",
+				onchange: (e) => setPartyStart(m.uid, e.target.value),
+			});
+			const startCell = h(
+				"td",
+				{ class: "aa-num aa-pbstartcell", title: fight.startAt.has(m.uid) && startOf(m) < 100 ? `steigt nach ${formatDuration(fight.startAt.get(m.uid))} ein` : "" },
+				startIn,
+				" %"
+			);
 			if (r && r.song) {
 				return h(
 					"tr",
 					{ class: "aa-pbsupport" },
 					h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
 					h("td", null, skillSel),
-					h("td", { colspan: "3", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
+					h("td", { colspan: "4", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
 					takenCells(r),
 					h(
 						"td",
@@ -3454,7 +3506,8 @@
 				h("td", null, skillSel),
 				h("td", { class: "aa-num" }, r ? r.hit.toFixed(1) : "–"),
 				h("td", { class: "aa-num", title: r && r.interval > 0 ? `alle ${r.interval.toFixed(2)} s` : "" }, r ? r.dps.toFixed(1) : "–"),
-				h("td", { class: "aa-pbshare" }, r ? [h("span", { class: "aa-pbbar", style: `width:${share.toFixed(1)}%` }), h("span", null, share.toFixed(1) + " %")] : "–"),
+				startCell,
+				h("td", { class: "aa-pbshare", title: "Anteil am Schaden bis zum Kill" }, r ? [h("span", { class: "aa-pbbar", style: `width:${share.toFixed(1)}%` }), h("span", null, share.toFixed(1) + " %")] : "–"),
 				takenCells(r),
 				h(
 					"td",
@@ -3484,7 +3537,7 @@
 						h(
 							"table",
 							{ class: "aa-pbtable" },
-							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", { class: "aa-num" }, "Max HP"), h("th", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters" }, "erlitten"), h("th", { class: "aa-num", title: "Treffer des Monster-Angriffs bis K.O. (Max HP ÷ erlittener Schaden)" }, "Treffer bis K.O."), h("th", null, ""))),
+							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", { class: "aa-num", title: "Greift ab diesem Anteil der Monster-HP an (Standard 100 %)" }, "DPS ab % HP"), h("th", null, "Anteil"), h("th", { class: "aa-num" }, "Max HP"), h("th", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters" }, "erlitten"), h("th", { class: "aa-num", title: "Treffer des Monster-Angriffs bis K.O. (Max HP ÷ erlittener Schaden)" }, "Treffer bis K.O."), h("th", null, ""))),
 							h("tbody", null, members.map(row))
 						)
 				  )
