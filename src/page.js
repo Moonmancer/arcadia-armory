@@ -1347,7 +1347,6 @@
 	// Other names of classes (e.g. from other servers) and common shorthands,
 	// searchable in the class field and the build search.
 	const JOB_ALIASES = {
-		Novice: ["Novi"],
 		"Super Novice": ["SN"],
 		"Star Gladiator": ["TKM"],
 		"Lord Knight": ["LK"],
