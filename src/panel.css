@@ -352,3 +352,46 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-statgain:hover { text-decoration: underline; }
 .aa-statgain.aa-statbest { font-weight: bold; }
 .aa-statgain.aa-statpoor { opacity: 0.45; }
+
+/* Builds tab */
+.aa-bname {
+	flex: 1;
+	min-width: 0;
+	padding: 5px 8px;
+	border: 1px solid #3b3180;
+	border-radius: 6px;
+	background: #120f2c;
+	color: #e8e6f5;
+	font: inherit;
+}
+.aa-bcompare { margin-top: 10px; overflow-x: auto; }
+.aa-bcompare table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.aa-bcompare th, .aa-bcompare td { padding: 4px 4px; border-bottom: 1px solid #3b3180; text-align: right; white-space: nowrap; }
+.aa-bcompare th:first-child, .aa-bcompare td:first-child { text-align: left; white-space: normal; }
+.aa-bcompare th { color: #e6c46a; font-weight: bold; }
+.aa-bcompare td.aa-bbest { color: #8fd694; font-weight: bold; }
+
+/* "Build-Vergleich" section below the combat simulator (uses the calculator's h3/.main look) */
+.aa-bv.main { padding: 8px 10px; }
+.aa-bvbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
+.aa-bvpick { min-width: 220px; }
+.aa-bvtable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.aa-bvtable th, .aa-bvtable td { padding: 4px 8px; border-bottom: 1px solid #5a4fb0; text-align: right; white-space: nowrap; }
+.aa-bvtable th:nth-child(-n+2), .aa-bvtable td:nth-child(-n+2) { text-align: left; }
+.aa-bvtable th { color: #e6c46a; }
+.aa-bvtable td.aa-bbest { color: #8fd694; font-weight: bold; }
+.aa-bvtable tr.aa-bvcurrent td { font-style: italic; }
+.aa-bvactions { width: 1%; }
+.aa-bvactions .aa-btn { margin-right: 4px; }
+
+/* Build comparison as cards: one copy of the combat result box per build, side by side */
+.aa-bvcards { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; padding-bottom: 6px; }
+.aa-bvcard { flex: none; display: flex; flex-direction: column; gap: 4px; }
+.aa-bvhead { display: flex; align-items: center; gap: 6px; padding: 4px 6px; border: 1px solid #5a4fb0; border-radius: 6px; }
+.aa-bvname { flex: 1; min-width: 0; }
+.aa-bvbox { margin: 0 !important; }
+.aa-bvval { font-weight: bold; }
+.aa-bvempty { width: 300px; }
+.aa-bvcard { width: 340px; }
+.aa-bvbox { width: 100%; }
+.aa-bvbox tr.aa-bvstat:last-of-type td, .aa-bvbox tr.aa-bvstat:nth-child(3) td { border-bottom: 1px solid #5a4fb0; }

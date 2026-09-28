@@ -367,6 +367,7 @@
 		theme: "armory", // calculator theme select: "armory" (add-on grayscale theme) | "system" | "dark" | "light"
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
+		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
 		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
 		applyInstance: true, // apply refine + cards of an owned item on selection
 		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
@@ -375,6 +376,7 @@
 	const state = {
 		items: [],
 		unmatched: [],
+		builds: [], // saved characters: { id, name, job, code, savedAt }
 		settings: { ...DEFAULT_SETTINGS },
 	};
 	let ownedById = new Map(); // calcId -> [instances]
@@ -388,7 +390,7 @@
 	}
 
 	function save() {
-		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, settings: state.settings } }, window.location.origin);
+		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, builds: state.builds, settings: state.settings } }, window.location.origin);
 	}
 
 	window.addEventListener("message", (event) => {
@@ -404,6 +406,7 @@
 		const d = event.data.data || {};
 		state.items = Array.isArray(d.items) ? d.items : [];
 		state.unmatched = Array.isArray(d.unmatched) ? d.unmatched : [];
+		state.builds = Array.isArray(d.builds) ? d.builds : [];
 		state.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
 		applyTheme(state.settings.theme);
 		rebuildOwned();
@@ -1032,9 +1035,12 @@
 	let refreshQueued = false;
 	const formObserver = new MutationObserver((records) => {
 		if (simulating || refreshQueued) return;
-		// Ignore option text updates and changes to the add-on's own elements.
-		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain"));
-		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && ![...r.addedNodes, ...r.removedNodes].every((n) => ours(n) || n.nodeType === 3 && ours(r.target));
+		// Only select rebuilds count: added / removed selects, options or optgroups.
+		// Result texts the calculator rewrites after every calc() (HP, ATK, ...) and
+		// the add-on's own elements are ignored.
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-bv, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-bv"));
+		const selectish = (n) => n.nodeType === 1 && !ours(n) && (n.matches("select, option, optgroup") || Boolean(n.querySelector("select")));
+		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && [...r.addedNodes, ...r.removedNodes].some(selectish);
 		if (!records.some(relevant)) return;
 		refreshQueued = true;
 		setTimeout(() => {
@@ -1264,6 +1270,7 @@
 			syncCombos();
 			updateSwapButton();
 			updateStatGains();
+			renderBuildCompare();
 		}, 0);
 	}
 
@@ -1676,7 +1683,7 @@
 		return node;
 	}
 
-	const ui = { tab: "import", compare: null, lastImport: null, inbox: null, scroll: {}, renderedTab: null, optimized: null };
+	const ui = { tab: "import", compare: null, lastImport: null, inbox: null, scroll: {}, renderedTab: null, optimized: null, buildImport: null };
 
 	function applyImport(res, replace) {
 		state.items = replace ? res.items : dedupe([...state.items, ...res.items]);
@@ -1741,10 +1748,11 @@
 				{ class: "aa-tabs" },
 				tabBtn("import", "Import"),
 				tabBtn("items", "Meine Items"),
-				tabBtn("compare", "Vergleich")
+				tabBtn("compare", "Vergleich"),
+				tabBtn("builds", "Builds")
 			),
 			renderInbox() || "",
-			h("div", { class: "aa-body" }, ui.tab === "import" ? renderImport() : ui.tab === "items" ? renderItems() : renderCompare())
+			h("div", { class: "aa-body" }, ui.tab === "import" ? renderImport() : ui.tab === "items" ? renderItems() : ui.tab === "builds" ? renderBuilds() : renderCompare())
 		);
 		ui.renderedTab = ui.tab;
 		panel.querySelector(".aa-body").scrollTop = ui.scroll[ui.tab] || 0;
@@ -2294,6 +2302,354 @@
 				  )
 				: null,
 		];
+	}
+
+	// ---------------------------------------------------------------------------
+	// Saved builds
+	// ---------------------------------------------------------------------------
+	//
+	// A build is the calculator's own "Save as URL" code (class, levels, stats,
+	// equipment with refine and cards, ammo, skill, buffs). The monster is kept
+	// as it is when loading or comparing, so builds are compared on one target.
+
+	// Current character as URL code, without URLOUT's alert and address change.
+	function captureBuild() {
+		const href = location.href;
+		const field = form.elements.namedItem("URL_TEXT");
+		const old = field ? field.value : "";
+		const alert = window.alert;
+		window.alert = () => {};
+		try {
+			URLOUT();
+			return field ? field.value.split("#")[1] || "" : "";
+		} finally {
+			window.alert = alert;
+			if (field) field.value = old;
+			history.replaceState(history.state, "", href);
+		}
+	}
+
+	// Loads a URL code through the calculator's "Load URL from another Calc",
+	// keeping the current monster.
+	function loadBuildCode(code) {
+		const input = document.getElementById("otherURL_TEXT");
+		if (!input || typeof URLIN !== "function") return false;
+		const old = input.value;
+		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		input.value = location.href.split("#")[0] + "#" + code;
+		applying = true;
+		try {
+			URLIN(1);
+			if (enemy != null && form.B_Enemy.value !== enemy) {
+				form.B_Enemy.value = enemy;
+				if (typeof Bskill === "function") Bskill();
+			}
+			window.calc();
+		} finally {
+			applying = false;
+			input.value = old;
+		}
+		invalidate();
+		refreshSelects();
+		return true;
+	}
+
+	function jobName() {
+		const o = form.A_JOB && form.A_JOB.selectedOptions[0];
+		return o ? o.text.trim() : "";
+	}
+
+	function saveBuild(name, replaceId) {
+		const code = captureBuild();
+		if (!code) return;
+		const entry = { id: replaceId || Math.random().toString(36).slice(2, 10), name, job: jobName(), code, savedAt: Date.now() };
+		const i = state.builds.findIndex((b) => b.id === replaceId);
+		if (i >= 0) state.builds[i] = entry;
+		else state.builds.push(entry);
+		save();
+		renderPanel();
+		renderBuildCompare();
+	}
+
+	// The calculator's own "Local Save" slots (localStorage "Slot<value>").
+	function calcSaveSlots() {
+		const sel = form.A_SaveSlotLocal;
+		if (!sel) return [];
+		const slots = [];
+		for (const opt of sel.options) {
+			let data = null;
+			try {
+				data = JSON.parse(localStorage.getItem(`Slot${opt.value}`));
+			} catch (e) {
+				/* empty or deleted slot */
+			}
+			if (Array.isArray(data)) slots.push({ value: opt.value, label: opt.text, name: String(data[440] || opt.text.replace(/^Save \d+:\s*/, "")).trim() });
+		}
+		return slots;
+	}
+
+	// Imports the "Local Save" slots as builds, loading each through the
+	// calculator's LoadLocal() and storing it in the URL format. Restores the
+	// current character, monster, slot selection and slot name afterwards.
+	function importCalcSaves() {
+		const sel = form.A_SaveSlotLocal;
+		const slots = calcSaveSlots();
+		if (!sel || !slots.length || typeof LoadLocal !== "function") return { added: 0, skipped: 0 };
+		const current = captureBuild();
+		const oldSlot = sel.value;
+		const nameField = form.elements.namedItem("SlotName");
+		const oldName = nameField ? nameField.value : null;
+		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		const alert = window.alert;
+		let added = 0;
+		let skipped = 0;
+		applying = true;
+		window.alert = () => {};
+		try {
+			for (const slot of slots) {
+				sel.value = slot.value;
+				LoadLocal();
+				const code = captureBuild();
+				if (!code || state.builds.some((b) => b.code === code)) {
+					skipped++;
+					continue;
+				}
+				state.builds.push({ id: Math.random().toString(36).slice(2, 10), name: slot.name, job: jobName(), code, savedAt: Date.now(), source: slot.label.split(":")[0] });
+				added++;
+			}
+		} finally {
+			window.alert = alert;
+			applying = false;
+			sel.value = oldSlot;
+			if (nameField) nameField.value = oldName;
+			if (enemy != null) form.B_Enemy.value = enemy;
+			loadBuildCode(current);
+		}
+		save();
+		return { added, skipped };
+	}
+
+	// Values of every metric for the current character.
+	function currentMetrics() {
+		const row = {};
+		for (const m of ["dps", "hit", "def"]) {
+			metricOverride = m;
+			try {
+				row[m] = baseline();
+			} finally {
+				metricOverride = null;
+			}
+		}
+		row.hp = (document.getElementById("A_MaxHP") || {}).textContent || "";
+		return row;
+	}
+
+	// Static copy of the calculator's combat result box (#cresults): selects
+	// become their text, the "All Damage Skills / ReCalculate" row is dropped and
+	// ids / names / handlers are removed so the original stays the only one.
+	function snapshotCombatBox() {
+		const box = document.getElementById("cresults");
+		if (!box) return null;
+		const copy = box.cloneNode(true);
+		const origSelects = box.querySelectorAll("select");
+		copy.querySelectorAll("select").forEach((sel, i) => {
+			const o = origSelects[i] && origSelects[i].selectedOptions[0];
+			sel.replaceWith(h("span", { class: "aa-bvval" }, o ? o.text.trim() : ""));
+		});
+		const first = copy.querySelector("#all_dmgSkills");
+		if (first) first.closest("tr").remove();
+		// Character values that are not part of the box: Max HP, Max SP, ASPD.
+		const body = copy.tBodies[0] || copy;
+		const stat = (label, id) => {
+			const v = document.getElementById(id);
+			return h("tr", { class: "aa-bvstat" }, h("td", { class: "right" }, label), h("td", null, v ? v.textContent.trim() : "–"));
+		};
+		body.prepend(stat("Max HP", "A_MaxHP"), stat("Max SP", "A_MaxSP"), stat("ASPD", "A_ASPD"));
+		copy.querySelectorAll("input, button, script").forEach((n) => n.remove());
+		for (const n of [copy, ...copy.querySelectorAll("*")]) {
+			for (const a of [...n.attributes]) {
+				if (a.name === "id" || a.name === "name" || a.name === "for" || a.name.startsWith("on")) n.removeAttribute(a.name);
+			}
+		}
+		copy.style.float = "none";
+		copy.classList.add("aa-bvbox");
+		return copy;
+	}
+
+	// Metrics and combat box of each build against the current monster; the
+	// current character is restored afterwards.
+	function evaluateBuilds(builds) {
+		const current = captureBuild();
+		const out = new Map();
+		try {
+			for (const b of builds) {
+				loadBuildCode(b.code);
+				out.set(b.id, { ...currentMetrics(), box: snapshotCombatBox() });
+			}
+		} finally {
+			loadBuildCode(current);
+			// The loads rebuilt selects; refreshSelects() already ran, so these are not
+			// a change the user made (would mark the comparison as outdated).
+			formObserver.takeRecords();
+		}
+		return out;
+	}
+
+	function renderBuilds() {
+		const nameInput = h("input", { type: "text", class: "aa-bname", placeholder: `Name, z. B. „${jobName()} MVP“`, maxlength: "60" });
+		const saveNew = () => saveBuild(nameInput.value.trim() || `${jobName()} ${state.builds.length + 1}`);
+		nameInput.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") saveNew();
+		});
+		return [
+			h("p", { class: "aa-hint" }, "Speichert den kompletten Charakter (Klasse, Stats, Ausrüstung mit Refine und Karten, Skill, Buffs). Laden behält das aktuell gewählte Monster. Zum Vergleichen: Abschnitt „Build-Vergleich“ unter dem Combat Simulator."),
+			h("div", { class: "aa-row" }, nameInput, h("button", { type: "button", class: "aa-btn aa-primary", onclick: saveNew }, "Speichern")),
+			(() => {
+				const slots = calcSaveSlots();
+				if (!slots.length) return null;
+				return h(
+					"div",
+					{ class: "aa-row" },
+					h(
+						"button",
+						{
+							type: "button",
+							class: "aa-btn",
+							title: "Übernimmt die „Local Save“-Slots des Calculators als Builds (bereits übernommene werden übersprungen)",
+							onclick: (e) => {
+								e.target.disabled = true;
+								e.target.textContent = "Importiere …";
+								setTimeout(() => {
+									ui.buildImport = importCalcSaves();
+									renderPanel();
+									renderBuildCompare();
+								}, 30);
+							},
+						},
+						`${slots.length} Calculator-Saves importieren`
+					),
+					ui.buildImport ? h("span", { class: "aa-dim" }, `${ui.buildImport.added} übernommen, ${ui.buildImport.skipped} schon vorhanden`) : null
+				);
+			})(),
+			state.builds.length === 0 ? h("p", { class: "aa-hint" }, "Noch keine Builds gespeichert.") : null,
+			h(
+				"div",
+				{ class: "aa-group" },
+				state.builds.map((b) =>
+					h(
+						"div",
+						{ class: "aa-item" },
+						h("div", { class: "aa-iname" }, b.name, h("div", { class: "aa-dim" }, `${b.job} · ${b.source ? b.source + " · " : ""}${new Date(b.savedAt).toLocaleString()}`)),
+						h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => (loadBuildCode(b.code), renderPanel()) }, "Laden"),
+						h("button", { type: "button", class: "aa-btn aa-small", title: "Mit dem aktuellen Charakter überschreiben", onclick: () => confirm(`„${b.name}“ mit dem aktuellen Charakter überschreiben?`) && saveBuild(b.name, b.id) }, "Aktualisieren"),
+						h(
+							"button",
+							{
+								type: "button",
+								class: "aa-x",
+								title: "Löschen",
+								onclick: () => {
+									if (!confirm(`Build „${b.name}“ löschen?`)) return;
+									state.builds = state.builds.filter((x) => x.id !== b.id);
+									state.settings.compareBuilds = state.settings.compareBuilds.filter((id) => id !== b.id);
+									bv.results.delete(b.id);
+									save();
+									renderPanel();
+									renderBuildCompare();
+								},
+							},
+							"×"
+						)
+					)
+				)
+			),
+		];
+	}
+
+	// ---------------------------------------------------------------------------
+	// "Build-Vergleich" section below the combat simulator
+	// ---------------------------------------------------------------------------
+
+	const bv = { results: new Map(), enemy: null }; // build id -> { metrics, box }; enemy they were computed for
+	const bvBody = h("div", { class: "main aa-bv" });
+	const bvSection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Build-Vergleich"), bvBody);
+
+	function placeBuildCompare() {
+		if (bvSection.isConnected) return;
+		const title = [...document.querySelectorAll("h3")].find((x) => /Combat Simulator/.test(x.textContent));
+		const block = title && title.nextElementSibling;
+		if (block) block.after(bvSection);
+	}
+
+	function computeBuildCompare() {
+		const builds = state.settings.compareBuilds.map((id) => state.builds.find((b) => b.id === id)).filter(Boolean);
+		bv.results = evaluateBuilds(builds);
+		bv.enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		renderBuildCompare();
+	}
+
+	function addToCompare(id) {
+		if (!id || state.settings.compareBuilds.includes(id)) return;
+		state.settings.compareBuilds = [...state.settings.compareBuilds, id];
+		save();
+		const b = state.builds.find((x) => x.id === id);
+		if (b) {
+			const enemy = form.B_Enemy ? form.B_Enemy.value : null;
+			if (bv.enemy != null && bv.enemy !== enemy) computeBuildCompare(); // others are outdated too
+			else {
+				evaluateBuilds([b]).forEach((v, k) => bv.results.set(k, v));
+				bv.enemy = enemy;
+			}
+		}
+		renderBuildCompare();
+	}
+
+	function removeFromCompare(id) {
+		state.settings.compareBuilds = state.settings.compareBuilds.filter((x) => x !== id);
+		bv.results.delete(id);
+		save();
+		renderBuildCompare();
+	}
+
+	function renderBuildCompare() {
+		placeBuildCompare();
+		const chosen = state.settings.compareBuilds.map((id) => state.builds.find((b) => b.id === id)).filter(Boolean);
+		const addable = state.builds.filter((b) => !state.settings.compareBuilds.includes(b.id));
+		const monster = form.B_Enemy ? form.B_Enemy.selectedOptions[0].text : "";
+		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		const stale = chosen.length > 0 && (bv.enemy !== enemy || chosen.some((b) => !bv.results.has(b.id)));
+		const picker = h("select", { class: "aa-bvpick" }, h("option", { value: "" }, addable.length ? "Build auswählen …" : "(alle Builds sind im Vergleich)"), addable.map((b) => h("option", { value: b.id }, `${b.name} (${b.job})`)));
+
+		const card = (b) => {
+			const res = bv.results.get(b.id);
+			return h(
+				"div",
+				{ class: "aa-bvcard" },
+				h(
+					"div",
+					{ class: "aa-bvhead" },
+					h("div", { class: "aa-bvname" }, h("strong", null, b.name), h("div", { class: "aa-dim" }, b.job)),
+					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadBuildCode(b.code) }, "Laden"),
+					h("button", { type: "button", class: "aa-x", title: "Aus dem Vergleich entfernen", onclick: () => removeFromCompare(b.id) }, "×")
+				),
+				res && res.box ? res.box : h("p", { class: "aa-hint aa-bvempty" }, "Noch nicht berechnet – „Neu berechnen“ klicken.")
+			);
+		};
+
+		bvBody.replaceChildren(
+			state.builds.length === 0
+				? h("p", { class: "aa-hint" }, "Noch keine Builds gespeichert. Im Armory-Panel unter „Builds“ den aktuellen Charakter speichern oder die Calculator-Saves importieren.")
+				: h(
+						"div",
+						{ class: "aa-bvbar" },
+						picker,
+						h("button", { type: "button", class: "aa-btn aa-small", disabled: !addable.length, onclick: () => addToCompare(picker.value) }, "Zum Vergleich hinzufügen"),
+						chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
+						h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
+						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
+				  ),
+			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : null
+		);
 	}
 
 	// ---------------------------------------------------------------------------

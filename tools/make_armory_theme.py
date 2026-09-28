@@ -35,7 +35,7 @@ ACCENTS = {
 }
 
 # Rules whose colors carry meaning and stay as they are.
-KEEP_SELECTORS = re.compile(r"aa-up|aa-down|\.ele[A-Z]|\.Race[A-Z]")
+KEEP_SELECTORS = re.compile(r"aa-up|aa-down|aa-bbest|\.ele[A-Z]|\.Race[A-Z]")
 # Background images that are icons rather than decoration.
 KEEP_IMAGES = re.compile(r"closebtn", re.I)
 

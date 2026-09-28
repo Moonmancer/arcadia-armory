@@ -836,6 +836,32 @@ html.aa-theme-armory .aa-optresult ul {
 html.aa-theme-armory .aa-cfiltered {
 	color: #c5c5c5 !important;
 }
+html.aa-theme-armory .aa-bname {
+	border: 1px solid #393939 !important;
+	background: #121212 !important;
+	color: #e8e8e8 !important;
+}
+html.aa-theme-armory .aa-bcompare th,
+html.aa-theme-armory .aa-bcompare td {
+	border-bottom: 1px solid #393939 !important;
+}
+html.aa-theme-armory .aa-bcompare th {
+	color: #c5c5c5 !important;
+}
+html.aa-theme-armory .aa-bvtable th,
+html.aa-theme-armory .aa-bvtable td {
+	border-bottom: 1px solid #585858 !important;
+}
+html.aa-theme-armory .aa-bvtable th {
+	color: #c5c5c5 !important;
+}
+html.aa-theme-armory .aa-bvhead {
+	border: 1px solid #585858 !important;
+}
+html.aa-theme-armory .aa-bvbox tr.aa-bvstat:last-of-type td,
+html.aa-theme-armory .aa-bvbox tr.aa-bvstat:nth-child(3) td {
+	border-bottom: 1px solid #585858 !important;
+}
 
 /* ---- readable form fields ---- */
 html.aa-theme-armory select:not(.aa-cinput):not(#aa-none),

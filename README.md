@@ -23,6 +23,11 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Zusätzlich gibt es in den Card Shortcuts die Ausrüstungs-Sets Goibne's, Morrigane's, Valkyrian, Morpheus's, die Odin's-Blessing-Sets und
    die Diabolus-Sets:
    sie legen alle Set-Teile in ihren Slots an (eigene Exemplare mit Refine/Karten bevorzugt). Abschaltbar unter *Meine Items*.
+5. **Builds** – Tab *Builds*: den kompletten Charakter (Klasse, Stats, Ausrüstung mit Refine und
+   Karten, Skill, Buffs) unter einem Namen speichern, per Klick laden oder aktualisieren. Unter dem
+   Combat Simulator gibt es den Abschnitt **Build-Vergleich**: gezielt einzelne Builds hinzufügen; für
+   jeden erscheint die Ergebnis-Box des Combat Simulators gegen das aktuell gewählte Monster, nebeneinander.
+   Die „Local Save“-Slots des Calculators lassen sich per Klick als Builds übernehmen.
 5. **Stat-Vorschlag** – neben jedem Stat steht, was +1 im gewählten Maßstab bringt und wie viele
    Statuspunkte es kostet; ★ markiert das beste Verhältnis unter den bezahlbaren. Klick setzt +1.
 5. **Monster- und Klassen-Suche** – Monster- und Klassenauswahl sind Suchfelder; bei Monstern zeigt jede Zeile Level, Rasse, Element,
