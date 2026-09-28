@@ -429,3 +429,17 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-bvcard { width: 340px; }
 .aa-bvbox { width: 100%; }
 .aa-bvbox tr.aa-bvstat:last-of-type td, .aa-bvbox tr.aa-bvstat:nth-child(3) td { border-bottom: 1px solid #5a4fb0; }
+
+/* Party-Battle */
+.aa-pblayout { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+.aa-pbmonster { flex: none; width: 220px; display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border: 1px solid #5a4fb0; border-radius: 8px; font-size: 12px; }
+.aa-pbmname { font-weight: bold; font-size: 13px; color: #e6c46a; }
+.aa-pbstat { display: flex; justify-content: space-between; gap: 8px; font-variant-numeric: tabular-nums; }
+.aa-pbtable { flex: 1; min-width: 480px; border-collapse: collapse; font-size: 12px; }
+.aa-pbtable th, .aa-pbtable td { padding: 4px 8px; border-bottom: 1px solid #5a4fb0; text-align: left; white-space: nowrap; vertical-align: middle; }
+.aa-pbtable th { color: #e6c46a; }
+.aa-pbtable td.aa-num { text-align: right; font-variant-numeric: tabular-nums; }
+.aa-pbskill { max-width: 200px; }
+.aa-pbshare { position: relative; min-width: 110px; font-variant-numeric: tabular-nums; }
+.aa-pbshare .aa-pbbar { position: absolute; left: 0; top: 25%; height: 50%; background: rgba(143, 214, 148, 0.25); border-radius: 3px; }
+.aa-pbshare span + span { position: relative; padding-left: 4px; }

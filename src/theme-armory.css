@@ -836,6 +836,19 @@ html.aa-theme-armory .aa-optresult ul {
 html.aa-theme-armory .aa-cfiltered {
 	color: #c5c5c5 !important;
 }
+html.aa-theme-armory .aa-stat {
+	border: 1px solid rgba(128, 128, 128, 0.55) !important;
+}
+html.aa-theme-armory .aa-stat .aa-statbtn {
+	background: rgba(128, 128, 128, 0.18) !important;
+}
+html.aa-theme-armory .aa-stat .aa-statbtn:hover:not(:disabled) {
+	background: rgba(128, 128, 128, 0.38) !important;
+}
+html.aa-theme-armory .aa-stat input.aa-statval {
+	border-left: 1px solid rgba(128, 128, 128, 0.55) !important;
+	border-right: 1px solid rgba(128, 128, 128, 0.55) !important;
+}
 html.aa-theme-armory .aa-bname {
 	border: 1px solid #393939 !important;
 	background: #121212 !important;
@@ -861,6 +874,22 @@ html.aa-theme-armory .aa-bvhead {
 html.aa-theme-armory .aa-bvbox tr.aa-bvstat:last-of-type td,
 html.aa-theme-armory .aa-bvbox tr.aa-bvstat:nth-child(3) td {
 	border-bottom: 1px solid #585858 !important;
+}
+html.aa-theme-armory .aa-pbmonster {
+	border: 1px solid #585858 !important;
+}
+html.aa-theme-armory .aa-pbmname {
+	color: #c5c5c5 !important;
+}
+html.aa-theme-armory .aa-pbtable th,
+html.aa-theme-armory .aa-pbtable td {
+	border-bottom: 1px solid #585858 !important;
+}
+html.aa-theme-armory .aa-pbtable th {
+	color: #c5c5c5 !important;
+}
+html.aa-theme-armory .aa-pbshare .aa-pbbar {
+	background: rgba(194, 194, 194, 0.25) !important;
 }
 
 /* ---- readable form fields ---- */

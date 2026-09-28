@@ -368,6 +368,7 @@
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
 		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
+		party: [], // "Party-Battle" members: { uid, build, skill } (skill null = the build's own)
 		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
 		applyInstance: true, // apply refine + cards of an owned item on selection
 		collapsed: [], // collapsed panel categories ("items:Weapon", "compare:A_weapon1", ...)
@@ -2856,6 +2857,7 @@
 									if (!confirm(`Build „${b.name}“ löschen?`)) return;
 									state.builds = state.builds.filter((x) => x.id !== b.id);
 									state.settings.compareBuilds = state.settings.compareBuilds.filter((id) => id !== b.id);
+									state.settings.party = state.settings.party.filter((m) => m.build !== b.id);
 									bv.results.delete(b.id);
 									save();
 									renderPanel();
@@ -2879,10 +2881,12 @@
 	const bvSection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Build-Vergleich"), bvBody);
 
 	function placeBuildCompare() {
-		if (bvSection.isConnected) return;
-		const title = [...document.querySelectorAll("h3")].find((x) => /Combat Simulator/.test(x.textContent));
-		const block = title && title.nextElementSibling;
-		if (block) block.after(bvSection);
+		if (!bvSection.isConnected) {
+			const title = [...document.querySelectorAll("h3")].find((x) => /Combat Simulator/.test(x.textContent));
+			const block = title && title.nextElementSibling;
+			if (block) block.after(bvSection);
+		}
+		if (bvSection.isConnected && bvSection.nextElementSibling !== partySection) bvSection.after(partySection);
 	}
 
 	function computeBuildCompare() {
@@ -2953,6 +2957,174 @@
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
 				  ),
 			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : ""
+		);
+		renderParty();
+	}
+
+	// ---------------------------------------------------------------------------
+	// "Party-Battle" section: several builds (also the same one twice), each with
+	// its own attack skill, against the current monster
+	// ---------------------------------------------------------------------------
+
+	const pb = { results: new Map(), enemy: null, hp: 0 }; // member uid -> { dps, hit, interval, skill }
+	const partySkills = new Map(); // build id -> { options: [{ value, text }], own: value of the saved skill }
+	const partyBody = h("div", { class: "main aa-bv aa-party" });
+	const partySection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Party-Battle"), partyBody);
+
+	const partyMembers = () => state.settings.party.map((m) => ({ ...m, b: state.builds.find((x) => x.id === m.build) })).filter((m) => m.b);
+
+	// Puts the member's attack skill on the loaded build (max level, as the
+	// calculator does when a skill is picked).
+	function applyPartySkill(skill) {
+		const sel = form.A_ActiveSkill;
+		if (skill == null || !sel || !hasOption(sel, skill) || sel.value === String(skill)) return;
+		sel.value = String(skill);
+		if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
+	}
+
+	function evaluateParty() {
+		const members = partyMembers();
+		const current = captureBuild();
+		pb.results = new Map();
+		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		try {
+			for (const m of members) {
+				loadBuildCode(m.b.code);
+				const sel = form.A_ActiveSkill;
+				if (sel && !partySkills.has(m.build)) {
+					partySkills.set(m.build, { own: sel.value, options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.value, text: o.text.trim() })) });
+				}
+				applyPartySkill(m.skill);
+				simulating = true;
+				try {
+					origCalc();
+				} finally {
+					simulating = false;
+				}
+				const hit = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
+				const interval = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
+				pb.results.set(m.uid, { hit, interval, dps: interval > 0 ? hit / interval : hit, skill: sel && sel.selectedOptions[0] ? sel.selectedOptions[0].text.trim() : "" });
+			}
+		} finally {
+			loadBuildCode(current);
+			formObserver.takeRecords();
+		}
+		pb.hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
+		renderParty();
+	}
+
+	function addPartyMember(buildId) {
+		if (!state.builds.some((b) => b.id === buildId)) return;
+		state.settings.party = [...state.settings.party, { uid: Math.random().toString(36).slice(2, 10), build: buildId, skill: null }];
+		save();
+		evaluateParty();
+	}
+
+	function updatePartyMember(uid, patch) {
+		state.settings.party = state.settings.party.map((m) => (m.uid === uid ? { ...m, ...patch } : m));
+		save();
+		evaluateParty();
+	}
+
+	function removePartyMember(uid) {
+		state.settings.party = state.settings.party.filter((m) => m.uid !== uid);
+		pb.results.delete(uid);
+		save();
+		renderParty();
+	}
+
+	function loadPartyMember(m) {
+		loadBuildCode(m.b.code);
+		applyPartySkill(m.skill);
+		window.calc();
+	}
+
+	function formatDuration(sec) {
+		if (!Number.isFinite(sec)) return "–";
+		if (sec < 60) return sec.toFixed(1) + " s";
+		const m = Math.floor(sec / 60);
+		if (m < 60) return `${m}:${String(Math.round(sec - 60 * m)).padStart(2, "0")} min`;
+		return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")} h`;
+	}
+
+	function renderParty() {
+		placeBuildCompare();
+		const members = partyMembers();
+		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		const stale = members.length > 0 && (pb.enemy !== enemy || members.some((m) => !pb.results.has(m.uid)));
+		const monster = form.B_Enemy && form.B_Enemy.selectedOptions[0] ? form.B_Enemy.selectedOptions[0].text.trim() : "";
+		const known = members.map((m) => pb.results.get(m.uid)).filter(Boolean);
+		const total = known.reduce((sum, r) => sum + r.dps, 0);
+		const hp = pb.hp || (typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0);
+		const ttk = total > 0 ? hp / total : Infinity;
+		const picker = h("select", { class: "aa-bvpick" }, h("option", { value: "" }, "Build auswählen …"), state.builds.map((b) => h("option", { value: b.id }, `${b.name} (${b.job})`)));
+
+		const stat = (label, value, title) => h("div", { class: "aa-pbstat", title: title || "" }, h("span", { class: "aa-dim" }, label), h("strong", null, value));
+		const monsterCard = h(
+			"div",
+			{ class: "aa-pbmonster" },
+			h("div", { class: "aa-pbmname" }, monster),
+			h("div", { class: "aa-dim" }, renderSub(monsterInfo(Number(enemy)).filter((p) => !/ HP$/.test(p.text)))),
+			stat("HP", hp ? hp.toLocaleString("en-US") : "–"),
+			stat("Party-DPS", total ? total.toFixed(1) : "–", "Summe der Ø Schaden/Sek. aller Mitglieder"),
+			stat("Zeit bis Kill", formatDuration(ttk), "HP ÷ Party-DPS"),
+			stat("Kills/Min.", Number.isFinite(ttk) && ttk > 0 ? (60 / ttk).toFixed(2) : "–", "ohne Laufwege und Respawn"),
+			stat("Mitglieder", String(members.length))
+		);
+
+		const row = (m) => {
+			const r = pb.results.get(m.uid);
+			const skills = partySkills.get(m.build);
+			const skillSel = h(
+				"select",
+				{ class: "aa-pbskill", title: "Angriffs-Skill dieses Mitglieds", onchange: (e) => updatePartyMember(m.uid, { skill: e.target.value === "" ? null : e.target.value }) },
+				h("option", { value: "", selected: m.skill == null }, skills ? `Build-Skill (${(skills.options.find((o) => o.value === skills.own) || { text: "?" }).text})` : "Build-Skill"),
+				skills ? skills.options.map((o) => h("option", { value: o.value, selected: m.skill === o.value }, o.text)) : null
+			);
+			const share = r && total > 0 ? (r.dps / total) * 100 : 0;
+			return h(
+				"tr",
+				null,
+				h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
+				h("td", null, skillSel),
+				h("td", { class: "aa-num" }, r ? r.hit.toFixed(1) : "–"),
+				h("td", { class: "aa-num", title: r && r.interval > 0 ? `alle ${r.interval.toFixed(2)} s` : "" }, r ? r.dps.toFixed(1) : "–"),
+				h("td", { class: "aa-pbshare" }, r ? [h("span", { class: "aa-pbbar", style: `width:${share.toFixed(1)}%` }), h("span", null, share.toFixed(1) + " %")] : "–"),
+				h(
+					"td",
+					{ class: "aa-bvactions" },
+					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build mit dem Skill in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+					h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
+				)
+			);
+		};
+
+		partyBody.replaceChildren(
+			state.builds.length === 0
+				? h("p", { class: "aa-hint" }, "Noch keine Builds gespeichert. Im Armory-Panel unter „Builds“ Charaktere speichern, dann hier zur Party hinzufügen.")
+				: h(
+						"div",
+						{ class: "aa-bvbar" },
+						picker,
+						h("button", { type: "button", class: "aa-btn aa-small", onclick: () => picker.value && addPartyMember(picker.value) }, "Zur Party hinzufügen"),
+						members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
+						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
+				  ),
+			members.length
+				? h(
+						"div",
+						{ class: "aa-pblayout" },
+						monsterCard,
+						h(
+							"table",
+							{ class: "aa-pbtable" },
+							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", null, "Anteil"), h("th", null, ""))),
+							h("tbody", null, members.map(row))
+						)
+				  )
+				: state.builds.length
+				? h("p", { class: "aa-hint" }, "Builds auswählen – derselbe Build darf mehrfach dabei sein, jedes Mitglied mit eigenem Skill.")
+				: ""
 		);
 	}
 

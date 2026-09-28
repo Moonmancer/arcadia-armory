@@ -28,6 +28,9 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Combat Simulator gibt es den Abschnitt **Build-Vergleich**: gezielt einzelne Builds hinzufügen; für
    jeden erscheint die Ergebnis-Box des Combat Simulators gegen das aktuell gewählte Monster, nebeneinander.
    Die „Local Save“-Slots des Calculators lassen sich per Klick als Builds übernehmen.
+   Darunter **Party-Battle**: Builds zu einer Party zusammenstellen (derselbe Build auch mehrfach), jedes
+   Mitglied mit eigenem Angriffs-Skill. Links die Monster-Karte mit HP, summierter Party-DPS, Zeit bis zum
+   Kill und Kills pro Minute, rechts Schaden/Treffer, DPS und Anteil je Mitglied.
 5. **Stat-Vorschlag** – neben jedem Stat steht, was +1 im gewählten Maßstab bringt und wie viele
    Statuspunkte es kostet; ★ markiert das beste Verhältnis unter den bezahlbaren. Klick setzt +1.
 5. **Monster- und Klassen-Suche** – Monster- und Klassenauswahl sind Suchfelder; bei Monstern zeigt jede Zeile Level, Rasse, Element,
