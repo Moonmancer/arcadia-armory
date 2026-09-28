@@ -2966,18 +2966,71 @@
 	// its own attack skill, against the current monster
 	// ---------------------------------------------------------------------------
 
-	const pb = { results: new Map(), enemy: null, hp: 0 }; // member uid -> { dps, hit, interval, skill }
+	const pb = { results: new Map(), enemy: null, hp: 0, played: [], songs: [] }; // member uid -> { dps, hit, interval, skill | song }
 	const partySkills = new Map(); // build id -> { options: [{ value, text }], own: value of the saved skill }
 	const partyBody = h("div", { class: "main aa-bv aa-party" });
 	const partySection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Party-Battle"), partyBody);
 
 	const partyMembers = () => state.settings.party.map((m) => ({ ...m, b: state.builds.find((x) => x.id === m.build) })).filter((m) => m.b);
 
+	// Support songs of Bard / Clown and Dancer / Gypsy, as the calculator's
+	// "Music and Dance Skills" keep them in n_A_Buf3: song level, the performer's
+	// stats the effect scales with and Music / Dance Lessons. A performing member
+	// deals no damage; every other member gets the songs (not the performer
+	// itself, as in the game). Ensembles need two performers and are left out.
+	const SONGS = [
+		{ key: "whistle", name: "A Whistle", bard: true, lv: 0, lessons: 30, stats: [[20, "AGI"], [19, "LUK"]] },
+		{ key: "acos", name: "Assassin Cross of Sunset", bard: true, lv: 1, lessons: 31, stats: [[21, "AGI"]] },
+		{ key: "bragi", name: "A Poem of Bragi", bard: true, lv: 2, lessons: 32, stats: [[22, "DEX"], [29, "INT", 150]] },
+		{ key: "idun", name: "The Apple of Idun", bard: true, lv: 3, lessons: 33, stats: [[23, "VIT"]] },
+		{ key: "humming", name: "Humming", bard: false, lv: 4, lessons: 34, stats: [[24, "DEX"]] },
+		{ key: "kiss", name: "Fortune's Kiss", bard: false, lv: 5, lessons: 35, stats: [[25, "LUK"]] },
+		{ key: "service", name: "Service for You", bard: false, lv: 6, lessons: 36, stats: [[26, "INT"]] },
+		{ key: "pdfm", name: "Please Don't Forget Me", bard: false, lv: 37, lessons: 27, stats: [[38, "DEX"], [39, "AGI"]] },
+	];
+	const SONG_PREFIX = "song:";
+	const songOf = (skill) => (typeof skill === "string" && skill.startsWith(SONG_PREFIX) ? SONGS.find((x) => x.key === skill.slice(SONG_PREFIX.length)) : null);
+
+	// true = Bard / Clown, false = Dancer / Gypsy, null = no performer.
+	function performerKind(job) {
+		const J = typeof JOBID !== "undefined" ? JOBID : {};
+		if (job === J.BARD || job === J.CLOWN) return true;
+		if (job === J.DANCER || job === J.GYPSY) return false;
+		return null;
+	}
+
+	// Song as the loaded (performing) build plays it: level 10, its final stats,
+	// its Music / Dance Lessons level (10 when the calculator has no such field).
+	function songFromCurrent(song) {
+		const lessonsId = typeof SKILLID !== "undefined" ? (song.bard ? SKILLID.BA_MUSICALLESSON : SKILLID.DC_DANCINGLESSON) : null;
+		const known = typeof m_JobBuff !== "undefined" && m_JobBuff[n_A_JOB] && m_JobBuff[n_A_JOB].includes(lessonsId);
+		const stat = { AGI: n_A_AGI, LUK: n_A_LUK, DEX: n_A_DEX, INT: n_A_INT, VIT: n_A_VIT };
+		return {
+			song,
+			lessons: known && typeof SkillSearch === "function" ? SkillSearch(lessonsId) : 10,
+			stats: song.stats.map(([idx, name, max]) => [idx, Math.max(1, Math.min(max || 200, Math.round(stat[name]) || 1))]),
+		};
+	}
+
+	// Puts the played songs on the loaded build; the "Music and Dance Skills"
+	// section (if open) is redrawn from these values so calc() reads them.
+	function applySongs(played) {
+		if (!played.length || typeof n_A_Buf3 === "undefined") return;
+		for (const p of played) {
+			n_A_Buf3[p.song.lv] = 10;
+			n_A_Buf3[p.song.lessons] = p.lessons;
+			for (const [idx, value] of p.stats) n_A_Buf3[idx] = value;
+		}
+		// Redraw all song rows, so their stat fields are rebuilt from these values.
+		if (typeof SWs3sw !== "undefined") SWs3sw.fill(0);
+		if (typeof Buf3SW === "function" && typeof n_Skill3SW !== "undefined") quietly(() => Buf3SW(n_Skill3SW));
+	}
+
 	// Puts the member's attack skill on the loaded build (max level, as the
 	// calculator does when a skill is picked).
 	function applyPartySkill(skill) {
 		const sel = form.A_ActiveSkill;
-		if (skill == null || !sel || !hasOption(sel, skill) || sel.value === String(skill)) return;
+		if (skill == null || songOf(skill) || !sel || !hasOption(sel, skill) || sel.value === String(skill)) return;
 		sel.value = String(skill);
 		if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
 	}
@@ -2987,14 +3040,38 @@
 		const current = captureBuild();
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		const cacheSkills = (m) => {
+			const sel = form.A_ActiveSkill;
+			if (!sel || partySkills.has(m.build)) return;
+			const kind = performerKind(n_A_JOB);
+			partySkills.set(m.build, {
+				own: sel.value,
+				options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.value, text: o.text.trim() })),
+				songs: kind == null ? [] : SONGS.filter((x) => x.bard === kind),
+			});
+		};
 		try {
+			// 1) Performers: which songs, with which stats.
+			const played = [];
 			for (const m of members) {
+				const song = songOf(m.skill);
+				if (!song && partySkills.has(m.build)) continue;
 				loadBuildCode(m.b.code);
-				const sel = form.A_ActiveSkill;
-				if (sel && !partySkills.has(m.build)) {
-					partySkills.set(m.build, { own: sel.value, options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.value, text: o.text.trim() })) });
-				}
+				cacheSkills(m);
+				if (!song || performerKind(n_A_JOB) !== song.bard) continue;
+				played.push({ ...songFromCurrent(song), uid: m.uid });
+				pb.results.set(m.uid, { hit: 0, interval: 0, dps: 0, song: song.name });
+			}
+			pb.played = played;
+			pb.songs = played.map((p) => p.song.name);
+			// 2) Everyone else, with the songs of the other members.
+			for (const m of members) {
+				if (pb.results.has(m.uid)) continue;
+				loadBuildCode(m.b.code);
+				cacheSkills(m);
 				applyPartySkill(m.skill);
+				applySongs(played.filter((p) => p.uid !== m.uid));
+				const sel = form.A_ActiveSkill;
 				simulating = true;
 				try {
 					origCalc();
@@ -3033,9 +3110,11 @@
 		renderParty();
 	}
 
+	// Loads the member as calculated here: its skill and the songs the others play.
 	function loadPartyMember(m) {
 		loadBuildCode(m.b.code);
 		applyPartySkill(m.skill);
+		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid));
 		window.calc();
 	}
 
@@ -3069,7 +3148,8 @@
 			stat("Party-DPS", total ? total.toFixed(1) : "–", "Summe der Ø Schaden/Sek. aller Mitglieder"),
 			stat("Zeit bis Kill", formatDuration(ttk), "HP ÷ Party-DPS"),
 			stat("Kills/Min.", Number.isFinite(ttk) && ttk > 0 ? (60 / ttk).toFixed(2) : "–", "ohne Laufwege und Respawn"),
-			stat("Mitglieder", String(members.length))
+			stat("Mitglieder", String(members.length)),
+			pb.songs && pb.songs.length ? h("div", { class: "aa-dim aa-pbsongs" }, "♪ " + pb.songs.join(", ")) : ""
 		);
 
 		const row = (m) => {
@@ -3077,11 +3157,29 @@
 			const skills = partySkills.get(m.build);
 			const skillSel = h(
 				"select",
-				{ class: "aa-pbskill", title: "Angriffs-Skill dieses Mitglieds", onchange: (e) => updatePartyMember(m.uid, { skill: e.target.value === "" ? null : e.target.value }) },
+				{ class: "aa-pbskill", title: "Angriffs-Skill dieses Mitglieds – oder ein Support-Song für die anderen", onchange: (e) => updatePartyMember(m.uid, { skill: e.target.value === "" ? null : e.target.value }) },
 				h("option", { value: "", selected: m.skill == null }, skills ? `Build-Skill (${(skills.options.find((o) => o.value === skills.own) || { text: "?" }).text})` : "Build-Skill"),
-				skills ? skills.options.map((o) => h("option", { value: o.value, selected: m.skill === o.value }, o.text)) : null
+				skills && skills.songs && skills.songs.length
+					? h("optgroup", { label: "Support-Songs (für die anderen)" }, skills.songs.map((x) => h("option", { value: SONG_PREFIX + x.key, selected: m.skill === SONG_PREFIX + x.key }, "♪ " + x.name)))
+					: null,
+				skills ? h("optgroup", { label: "Angriff" }, skills.options.map((o) => h("option", { value: o.value, selected: m.skill === o.value }, o.text))) : null
 			);
 			const share = r && total > 0 ? (r.dps / total) * 100 : 0;
+			if (r && r.song) {
+				return h(
+					"tr",
+					{ class: "aa-pbsupport" },
+					h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
+					h("td", null, skillSel),
+					h("td", { colspan: "3", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
+					h(
+						"td",
+						{ class: "aa-bvactions" },
+						h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+						h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
+					)
+				);
+			}
 			return h(
 				"tr",
 				null,

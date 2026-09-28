@@ -31,6 +31,9 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Darunter **Party-Battle**: Builds zu einer Party zusammenstellen (derselbe Build auch mehrfach), jedes
    Mitglied mit eigenem Angriffs-Skill. Links die Monster-Karte mit HP, summierter Party-DPS, Zeit bis zum
    Kill und Kills pro Minute, rechts Schaden/Treffer, DPS und Anteil je Mitglied.
+   Bard/Minstrel und Dancer/Gypsy können statt eines Angriffs einen Support-Song spielen (A Whistle, Assassin
+   Cross of Sunset, Poem of Bragi, Apple of Idun, Humming, Fortune's Kiss, Service for You, Please Don't
+   Forget Me): Er wirkt mit Level 10, den Stats und der Music/Dance Lessons des Builds auf alle anderen Mitglieder.
 5. **Stat-Vorschlag** – neben jedem Stat steht, was +1 im gewählten Maßstab bringt und wie viele
    Statuspunkte es kostet; ★ markiert das beste Verhältnis unter den bezahlbaren. Klick setzt +1.
 5. **Monster- und Klassen-Suche** – Monster- und Klassenauswahl sind Suchfelder; bei Monstern zeigt jede Zeile Level, Rasse, Element,
