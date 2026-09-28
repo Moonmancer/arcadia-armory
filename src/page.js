@@ -2952,7 +2952,7 @@
 						h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
 				  ),
-			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : null
+			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : ""
 		);
 	}
 
