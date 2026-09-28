@@ -2878,6 +2878,78 @@
 	// "Build-Vergleich" section below the combat simulator
 	// ---------------------------------------------------------------------------
 
+	// Search field for saved builds (name or class). One element per section that
+	// survives the section's redraws, so typing isn't interrupted by a
+	// recalculation. getBuilds() gives the builds that can be picked.
+	function buildSearch({ getBuilds, onPick, placeholder }) {
+		const input = h("input", { type: "text", class: "aa-bsinput", placeholder, autocomplete: "off", spellcheck: "false" });
+		const list = h("div", { class: "aa-bslist" });
+		const wrap = h("span", { class: "aa-bsearch" }, input, list);
+		let shown = [];
+		let active = 0;
+		const close = () => {
+			list.classList.remove("aa-open");
+			list.replaceChildren();
+		};
+		const pick = (b) => {
+			input.value = "";
+			close();
+			onPick(b);
+		};
+		const render = () => {
+			const tokens = searchNorm(input.value).split(" ").filter(Boolean);
+			const all = getBuilds();
+			shown = all.filter((b) => {
+				const hay = " " + searchNorm(`${b.name} ${b.job}`);
+				return tokens.every((t) => hay.includes(" " + t) || hay.includes(t));
+			});
+			active = Math.min(active, Math.max(0, shown.length - 1));
+			list.replaceChildren(
+				...(shown.length
+					? shown.map((b, i) =>
+							h(
+								"div",
+								{
+									class: "aa-crow" + (i === active ? " aa-active" : ""),
+									onmousedown: (e) => e.preventDefault(),
+									onclick: () => pick(b),
+								},
+								h("div", { class: "aa-cmain" }, h("div", { class: "aa-cname" }, b.name), h("div", { class: "aa-dim" }, b.job))
+							)
+					  )
+					: [h("div", { class: "aa-bsempty aa-dim" }, all.length ? "Kein Build passt" : "Keine Builds verfügbar")])
+			);
+			list.classList.add("aa-open");
+			const el = list.children[active];
+			if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest" });
+		};
+		input.addEventListener("focus", () => {
+			active = 0;
+			render();
+		});
+		input.addEventListener("input", () => {
+			active = 0;
+			render();
+		});
+		input.addEventListener("blur", close);
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+				e.preventDefault();
+				if (!list.classList.contains("aa-open")) return render();
+				active = Math.max(0, Math.min(shown.length - 1, active + (e.key === "ArrowDown" ? 1 : -1)));
+				render();
+			} else if (e.key === "Enter") {
+				e.preventDefault();
+				if (shown[active]) pick(shown[active]);
+			} else if (e.key === "Escape") {
+				input.value = "";
+				close();
+				input.blur();
+			}
+		});
+		return wrap;
+	}
+
 	const bv = { results: new Map(), enemy: null }; // build id -> { metrics, box }; enemy they were computed for
 	const bvBody = h("div", { class: "main aa-bv" });
 	const bvSection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Build-Vergleich"), bvBody);
@@ -2921,14 +2993,18 @@
 		renderBuildCompare();
 	}
 
+	const bvSearch = buildSearch({
+		getBuilds: () => state.builds.filter((b) => !state.settings.compareBuilds.includes(b.id)),
+		onPick: (b) => addToCompare(b.id),
+		placeholder: "Build zum Vergleich hinzufügen – Name oder Klasse …",
+	});
+
 	function renderBuildCompare() {
 		placeBuildCompare();
 		const chosen = state.settings.compareBuilds.map((id) => state.builds.find((b) => b.id === id)).filter(Boolean);
-		const addable = state.builds.filter((b) => !state.settings.compareBuilds.includes(b.id));
 		const monster = form.B_Enemy ? form.B_Enemy.selectedOptions[0].text : "";
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		const stale = chosen.length > 0 && (bv.enemy !== enemy || chosen.some((b) => !bv.results.has(b.id)));
-		const picker = h("select", { class: "aa-bvpick" }, h("option", { value: "" }, addable.length ? "Build auswählen …" : "(alle Builds sind im Vergleich)"), addable.map((b) => h("option", { value: b.id }, `${b.name} (${b.job})`)));
 
 		const card = (b) => {
 			const res = bv.results.get(b.id);
@@ -2952,8 +3028,7 @@
 				: h(
 						"div",
 						{ class: "aa-bvbar" },
-						picker,
-						h("button", { type: "button", class: "aa-btn aa-small", disabled: !addable.length, onclick: () => addToCompare(picker.value) }, "Zum Vergleich hinzufügen"),
+						bvSearch,
 						chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
 						h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
@@ -3212,6 +3287,12 @@
 		return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")} h`;
 	}
 
+	const partySearch = buildSearch({
+		getBuilds: () => state.builds,
+		onPick: (b) => addPartyMember(b.id),
+		placeholder: "Build zur Party hinzufügen – Name oder Klasse …",
+	});
+
 	function renderParty() {
 		placeBuildCompare();
 		const members = partyMembers();
@@ -3232,7 +3313,6 @@
 		const total = known.reduce((sum, r) => sum + r.dps, 0);
 		const hp = pb.hp || (typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0);
 		const ttk = total > 0 ? hp / total : Infinity;
-		const picker = h("select", { class: "aa-bvpick" }, h("option", { value: "" }, "Build auswählen …"), state.builds.map((b) => h("option", { value: b.id }, `${b.name} (${b.job})`)));
 
 		const atkSel = form.B_AtkSkill;
 		const monsterAtkSelect = h(
@@ -3353,8 +3433,7 @@
 				: h(
 						"div",
 						{ class: "aa-bvbar" },
-						picker,
-						h("button", { type: "button", class: "aa-btn aa-small", onclick: () => picker.value && addPartyMember(picker.value) }, "Zur Party hinzufügen"),
+						partySearch,
 						members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
 						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
 				  ),

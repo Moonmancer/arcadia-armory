@@ -408,7 +408,36 @@ tr.tequip > td > table > tbody > tr > td {
 /* "Build-Vergleich" section below the combat simulator (uses the calculator's h3/.main look) */
 .aa-bv.main { padding: 8px 10px; }
 .aa-bvbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 12px; }
-.aa-bvpick { min-width: 220px; }
+.aa-bsearch { position: relative; display: inline-block; }
+.aa-bsearch input.aa-bsinput {
+	box-sizing: border-box;
+	width: 300px;
+	padding: 3px 8px;
+	border: 1px solid #5a4fb0;
+	border-radius: 8px;
+	background: #120f2c;
+	color: #e8e6f5;
+	font: 12px/1.4 sans-serif;
+}
+.aa-bsearch input.aa-bsinput:focus { outline: 1px solid #e6c46a; }
+.aa-bslist {
+	position: absolute;
+	top: calc(100% + 2px);
+	left: 0;
+	z-index: 50;
+	display: none;
+	min-width: 100%;
+	max-height: 260px;
+	overflow-y: auto;
+	border: 1px solid #e6c46a;
+	border-radius: 8px;
+	background: #1d1842;
+	color: #e8e6f5;
+	font: 12px/1.35 sans-serif;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+.aa-bslist.aa-open { display: block; }
+.aa-bsempty { padding: 6px 8px; }
 .aa-bvtable { width: 100%; border-collapse: collapse; font-size: 12px; }
 .aa-bvtable th, .aa-bvtable td { padding: 4px 8px; border-bottom: 1px solid #5a4fb0; text-align: right; white-space: nowrap; }
 .aa-bvtable th:nth-child(-n+2), .aa-bvtable td:nth-child(-n+2) { text-align: left; }

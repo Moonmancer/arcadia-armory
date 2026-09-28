@@ -861,6 +861,20 @@ html.aa-theme-armory .aa-bcompare td {
 html.aa-theme-armory .aa-bcompare th {
 	color: #c5c5c5 !important;
 }
+html.aa-theme-armory .aa-bsearch input.aa-bsinput {
+	border: 1px solid #585858 !important;
+	background: #121212 !important;
+	color: #e8e8e8 !important;
+}
+html.aa-theme-armory .aa-bsearch input.aa-bsinput:focus {
+	outline: 1px solid #c5c5c5 !important;
+}
+html.aa-theme-armory .aa-bslist {
+	border: 1px solid #c5c5c5 !important;
+	background: #1c1c1c !important;
+	color: #e8e8e8 !important;
+	box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5) !important;
+}
 html.aa-theme-armory .aa-bvtable th,
 html.aa-theme-armory .aa-bvtable td {
 	border-bottom: 1px solid #585858 !important;
