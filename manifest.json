@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Arcadia Armory",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "description": "Importiert deine Items (Control Panel oder eingefügte Liste) in den Arcadia Online Calculator, filtert die Ausrüstungsauswahl auf deine Items und zeigt die Schadensänderung direkt in der Auswahl.",
   "browser_specific_settings": {
     "gecko": {
