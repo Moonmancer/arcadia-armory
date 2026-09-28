@@ -71,30 +71,38 @@ signiert – es bleibt privat, die Prüfung ist automatisiert und dauert meist n
    npx web-ext lint --source-dir build --self-hosted
    ```
 
-3. Auf [addons.mozilla.org/developers](https://addons.mozilla.org/developers/) anmelden, **Submit a New
-   Add-on** (bzw. bei Updates **Upload New Version**), als Kanal **On your own** wählen.
-4. `dist/<version>/arcadia-armory-<version>-unsigned.xpi` hochladen. Die Frage nach dem Quellcode mit **nein** beantworten – nichts ist
-   minifiziert oder gebündelt (`woe-blacklist.js` und `theme-armory.css` sind lesbar generiert).
-5. Die signierte `.xpi` unter **Manage My Submissions → Versions** herunterladen (Downloads-Ordner,
-   Projektordner oder `dist/<version>/` – der Dateiname ist egal).
-6. Signierte Fassung veröffentlichen, damit Firefox das Update findet (erster Aufruf = Probelauf):
+3. Signieren lassen und Probelauf – `--sign` baut das Paket und reicht `build/` über die AMO-API als
+   unlisted ein, die signierte Datei landet in `dist/<version>/`:
 
    ```bash
-   python release.py
+   python release.py --sign
+   ```
+
+   Einmalig nötig: einen API-Schlüssel unter
+   [addons.mozilla.org/developers/addon/api/key](https://addons.mozilla.org/developers/addon/api/key/) erzeugen
+   und als Benutzer-Variablen `WEB_EXT_API_KEY` (JWT issuer) und `WEB_EXT_API_SECRET` (JWT secret) setzen.
+   Node.js muss installiert sein (`npx web-ext`).
+
+   Ohne API geht es auch von Hand: auf addons.mozilla.org **Upload New Version**, Kanal **On your own**,
+   `dist/<version>/arcadia-armory-<version>-unsigned.xpi` hochladen (Quellcode-Frage mit **nein** beantworten –
+   nichts ist minifiziert oder gebündelt), die signierte `.xpi` herunterladen und `python release.py`
+   aufrufen (sucht in `dist/<version>/`, im Projektordner und im Downloads-Ordner).
+4. Veröffentlichen, damit Firefox das Update findet:
+
+   ```bash
    python release.py --publish
    ```
 
-   `release.py` sucht die signierte Datei zur Version aus `manifest.json`, prüft Signatur, Id und Version,
-   legt sie als `dist/<version>/arcadia-armory-<version>.xpi` ab, legt das GitHub-Release an, trägt Link
-   und sha256 in `updates.json` ein und pusht sie. `manifest.json` → `update_url` → `updates.json` →
-   Release-Asset.
+   `release.py` prüft Signatur, Id und Version der signierten Datei, legt sie als
+   `dist/<version>/arcadia-armory-<version>.xpi` ab, legt das GitHub-Release an, trägt Link und sha256 in
+   `updates.json` ein und pusht sie. `manifest.json` → `update_url` → `updates.json` → Release-Asset.
 
 Lokales Archiv (nicht im Repo, öffentlich liegen die signierten Dateien in den GitHub-Releases):
 
 ```
 dist/
   1.0.0/  arcadia-armory-1.0.0.xpi                    signiert
-  1.1.0/  arcadia-armory-1.1.0-unsigned.xpi           gebaut, bei AMO hochgeladen
+  1.1.0/  arcadia-armory-1.1.0-unsigned.xpi           gebaut, bei AMO eingereicht
           arcadia-armory-1.1.0.xpi                    signiert (nach release.py)
 ```
 

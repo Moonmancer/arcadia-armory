@@ -2,6 +2,7 @@
 # traegt sie in updates.json ein, damit Firefox das Update automatisch findet.
 #
 #   python release.py                 Probelauf
+#   python release.py --sign          vorher bauen und bei AMO signieren lassen
 #   python release.py --publish       veroeffentlichen
 #   python release.py <datei> ...     bestimmte signierte Datei verwenden
 #
@@ -14,11 +15,17 @@
 # Ohne --publish passiert nichts nach aussen: das Skript prueft die Datei,
 # schreibt dist/ und updates.json und zeigt, was es tun wuerde.
 #
+# --sign baut das Paket (package.py) und laesst build/ ueber die AMO-API als
+# unlisted signieren (npx web-ext sign). Die Zugangsdaten kommen aus den
+# Umgebungsvariablen WEB_EXT_API_KEY / WEB_EXT_API_SECRET, unter Windows
+# notfalls direkt aus den gespeicherten Benutzer-Variablen. Jede Version
+# laesst sich nur einmal signieren; liegt schon eine signierte Datei vor,
+# wird nicht erneut signiert.
+#
 # Reihenfolge im Gesamtablauf:
-#   1. python package.py                      Paket bauen (dist/<version>/...-unsigned.xpi)
-#   2. bei addons.mozilla.org hochladen       signieren lassen
-#   3. signierte .xpi herunterladen
-#   4. python release.py --publish            veroeffentlichen
+#   1. version in manifest.json erhoehen
+#   2. python release.py --sign               bauen, signieren, Probelauf
+#   3. python release.py --publish            veroeffentlichen
 import argparse
 import hashlib
 import json
@@ -68,6 +75,53 @@ def read_manifest_from_xpi(path):
         return json.loads(z.read("manifest.json").decode("utf-8")), signed
 
 
+def api_credentials():
+    """AMO-Zugangsdaten aus der Umgebung, unter Windows notfalls aus den
+    Benutzer-Variablen (die ein schon laufender Prozess noch nicht sieht)."""
+    names = ("WEB_EXT_API_KEY", "WEB_EXT_API_SECRET")
+    creds = {n: os.environ.get(n, "") for n in names}
+    if not all(creds.values()) and sys.platform == "win32":
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+                for n in names:
+                    if not creds[n]:
+                        try:
+                            creds[n] = winreg.QueryValueEx(key, n)[0]
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+    missing = [n for n in names if not creds[n]]
+    if missing:
+        fail("AMO-Zugangsdaten fehlen: " + ", ".join(missing) + "\n"
+             "  Schluessel unter https://addons.mozilla.org/developers/addon/api/key/ erzeugen.")
+    return creds
+
+
+def sign(version, addon_id):
+    """Baut das Paket und laesst build/ bei AMO als unlisted signieren."""
+    try:
+        existing = find_signed(version, addon_id)
+    except SystemExit:
+        existing = None
+    if existing:
+        print("schon signiert: %s - ueberspringe das Signieren" % existing)
+        return
+    creds = api_credentials()
+    npx = shutil.which("npx")
+    if not npx:
+        fail("npx nicht gefunden - Node.js installieren")
+    print("Paket bauen:")
+    run([sys.executable, "package.py"], stdout=subprocess.DEVNULL)
+    print("bei AMO signieren (unlisted, dauert meist ein paar Minuten):")
+    out_dir = os.path.join(DIST, version)
+    # Zugangsdaten nur ueber die Umgebung, nie auf der Kommandozeile.
+    run([npx, "--yes", "web-ext@8", "sign", "--channel=unlisted",
+         "--source-dir", "build", "--artifacts-dir", out_dir],
+        env={**os.environ, **creds})
+
+
 def find_signed(version, addon_id):
     """Neueste signierte .xpi dieser Version/Id in dist/<version>/, im
     Projektordner oder im Downloads-Ordner."""
@@ -96,6 +150,8 @@ def find_signed(version, addon_id):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("xpi", nargs="?", help="die von Mozilla signierte .xpi (sonst wird gesucht)")
+    ap.add_argument("--sign", action="store_true",
+                    help="vorher bauen und ueber die AMO-API signieren lassen")
     ap.add_argument("--publish", action="store_true",
                     help="Release wirklich anlegen und updates.json pushen")
     ap.add_argument("--allow-unsigned", action="store_true",
@@ -105,6 +161,10 @@ def main():
 
     with open("manifest.json", encoding="utf-8") as fh:
         local = json.load(fh)
+    if args.sign:
+        if args.xpi:
+            fail("--sign und eine Dateiangabe schliessen sich aus")
+        sign(local["version"], local["browser_specific_settings"]["gecko"]["id"])
     if not args.xpi:
         args.xpi = find_signed(local["version"], local["browser_specific_settings"]["gecko"]["id"])
         print("gefunden : %s" % args.xpi)
@@ -139,7 +199,10 @@ def main():
     os.makedirs(target_dir, exist_ok=True)
     target = os.path.join(target_dir, asset)
     if os.path.abspath(args.xpi) != os.path.abspath(target):
-        shutil.copy2(args.xpi, target)
+        if os.path.dirname(os.path.abspath(args.xpi)) == os.path.abspath(target_dir):
+            os.replace(args.xpi, target)  # z. B. die von web-ext benannte Datei
+        else:
+            shutil.copy2(args.xpi, target)
     digest = hashlib.sha256(open(target, "rb").read()).hexdigest()
     link = "https://github.com/%s/releases/download/%s/%s" % (slug, tag, asset)
 
