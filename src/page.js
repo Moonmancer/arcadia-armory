@@ -1088,8 +1088,9 @@
 	// changes the whole character or target, so a delta would say nothing).
 	const MONSTER_FIELD = { key: "B_Enemy", label: "Monster", short: "", monster: true, listOnly: true, refine: null, cards: [] };
 	const JOB_FIELD = { key: "A_JOB", label: "Class", short: "", listOnly: true, refine: null, cards: [] };
-	// Created by the calculator only once "Buffs, Items and other stuff" is opened.
-	const PET_FIELD = { key: "A8_Skill0", label: "Pet", short: "", listOnly: true, refine: null, cards: [] };
+	// Created by the calculator only once "Additional Effects" is opened. Pets are
+	// never owned items, so every row gets its damage change (few entries).
+	const PET_FIELD = { key: "A8_Skill0", label: "Pet", short: "", noOwned: true, refine: null, cards: [] };
 
 	const stripTags = (html) => String(html || "").replace(/<[^>]*>/g, "").trim();
 
@@ -1531,7 +1532,7 @@
 
 		if (s.preview !== "off" && !slot.listOnly) {
 			const base = baseline();
-			const sims = slot.shortcut ? rows.filter((r) => r.kind !== "none" && s.preview === "all") : rows.filter((r) => s.preview === "all" || r.owned || r.kind === "none");
+			const sims = slot.shortcut ? rows.filter((r) => r.kind !== "none" && s.preview === "all") : rows.filter((r) => s.preview === "all" || slot.noOwned || r.owned || r.kind === "none");
 			const vals = slot.shortcut ? shortcutValues(slot, sims) : simulate(sims.map((r) => r.variant));
 			sims.forEach((r, i) => {
 				r.dmg = vals[i];
@@ -1607,7 +1608,7 @@
 			"div",
 			{ class: "aa-chead" },
 			h("span", { class: "aa-dim" }, h("strong", { class: "aa-cslotname" }, o.slot.label), ` · ${o.shown.length} Treffer`, o.filteredCount ? h("span", { class: "aa-cfiltered", title: "Passende Einträge, die ein Filter ausblendet (Pre-trans WoE, Hide unavailable, nur eigene)" }, ` · ${o.filteredCount} gefiltert`) : null),
-			o.slot.card || o.slot.shortcut || o.slot.listOnly ? null : h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, disabled: !state.items.length, onchange: (e) => setAndReopen("onlyOwned", e.target.checked) }), " nur eigene"),
+			o.slot.card || o.slot.shortcut || o.slot.listOnly || o.slot.noOwned ? null : h("label", null, h("input", { type: "checkbox", checked: s.onlyOwned, disabled: !state.items.length, onchange: (e) => setAndReopen("onlyOwned", e.target.checked) }), " nur eigene"),
 			o.slot.listOnly ? null : h(
 				"button",
 				{ type: "button", class: "aa-btn aa-small", title: "Sortierung umschalten", onclick: () => setAndReopen("comboSort", s.comboSort === "dmg" ? "name" : "dmg") },
