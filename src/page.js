@@ -1088,6 +1088,8 @@
 	// changes the whole character or target, so a delta would say nothing).
 	const MONSTER_FIELD = { key: "B_Enemy", label: "Monster", short: "", monster: true, listOnly: true, refine: null, cards: [] };
 	const JOB_FIELD = { key: "A_JOB", label: "Class", short: "", listOnly: true, refine: null, cards: [] };
+	// Created by the calculator only once "Buffs, Items and other stuff" is opened.
+	const PET_FIELD = { key: "A8_Skill0", label: "Pet", short: "", listOnly: true, refine: null, cards: [] };
 
 	const stripTags = (html) => String(html || "").replace(/<[^>]*>/g, "").trim();
 
@@ -1117,7 +1119,7 @@
 	}
 
 	function comboSelects() {
-		const extra = [...CARD_FIELDS, ...SHORTCUT_FIELDS, MONSTER_FIELD, JOB_FIELD].map((d) => ({ slot: d, select: el(d.key) })).filter((x) => x.select && x.select.tagName === "SELECT");
+		const extra = [...CARD_FIELDS, ...SHORTCUT_FIELDS, MONSTER_FIELD, JOB_FIELD, PET_FIELD].map((d) => ({ slot: d, select: el(d.key) })).filter((x) => x.select && x.select.tagName === "SELECT");
 		return [...slotSelects(), ...extra];
 	}
 
