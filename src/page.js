@@ -468,10 +468,44 @@
 			const hp = Number(String((document.getElementById("A_MaxHP") || {}).textContent || "").replace(/[^\d.]/g, "")) || 0;
 			return hp / Math.max(damageReceived(), 1e-3);
 		}
-		const avg = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
-		const t = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
-		if (currentMetric() === "hit" || !(t > 0)) return avg;
-		return avg / t;
+		const { hit, interval } = attackNow();
+		if (currentMetric() === "hit" || !(interval > 0)) return hit;
+		return hit / interval;
+	}
+
+	// Damage and time of one attack after the last calculation (w_DMG[1], cast +
+	// delay). For a skill combo (see SKILL_COMBOS) the whole sequence: the
+	// calculator computed its first skill, the others are calculated here too.
+	function attackNow() {
+		const single = () => ({
+			hit: Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0,
+			interval: (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0),
+		});
+		const combo = activeCombo();
+		if (!combo || comboRunning) return single();
+		const first = single();
+		const sel = form.A_ActiveSkill;
+		const lvSel = form.A_ActiveSkillLV;
+		const index = sel.selectedIndex;
+		const lv = lvSel ? lvSel.value : null;
+		const parts = [first];
+		comboRunning = true;
+		try {
+			for (const id of combo.then) {
+				if (!hasOption(sel, id)) continue;
+				sel.value = String(id);
+				if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
+				origCalc();
+				parts.push(single());
+			}
+		} finally {
+			sel.selectedIndex = index;
+			if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
+			if (lvSel && lv != null && hasOption(lvSel, lv)) lvSel.value = lv;
+			origCalc();
+			comboRunning = false;
+		}
+		return { hit: parts.reduce((sum, p) => sum + p.hit, 0), interval: parts.reduce((sum, p) => sum + p.interval, 0), parts };
 	}
 
 	// "Average Dmg Received (w/dodge)" of the combat simulator: DEF / MDEF,
@@ -479,6 +513,74 @@
 	function damageReceived() {
 		const cell = document.getElementById("B_Ave2Atk");
 		return Number(String(cell ? cell.textContent : "").replace(/[^\d.]/g, "")) || 0;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Skill combos: sequences the game forces, as one entry in the skill list
+	// ---------------------------------------------------------------------------
+	//
+	// Beast Strafing can only follow a Double Strafe, so Hunter / Sniper get
+	// "Double Strafe → Beast Strafing". The entry carries Double Strafe's value
+	// (the calculator reads the list as a number and shows that skill); damage
+	// and time of the whole sequence are summed by attackNow().
+	const SKILL_COMBOS = [{ key: "dsbs", name: "Double Strafe → Beast Strafing", first: 40, then: [391], jobs: ["HUNTER", "SNIPER"] }];
+	const COMBO_PREFIX = "combo:";
+	let comboRunning = false;
+
+	function activeCombo() {
+		const sel = form.A_ActiveSkill;
+		const o = sel && sel.selectedOptions[0];
+		return o && o.dataset.aaCombo ? SKILL_COMBOS.find((c) => c.key === o.dataset.aaCombo) || null : null;
+	}
+
+	function updateSkillCombos() {
+		const sel = form.A_ActiveSkill;
+		if (!sel) return;
+		const J = typeof JOBID !== "undefined" ? JOBID : {};
+		for (const c of SKILL_COMBOS) {
+			const fits = c.jobs.some((j) => J[j] === n_A_JOB) && hasOption(sel, c.first) && c.then.every((id) => hasOption(sel, id));
+			const opt = [...sel.options].find((o) => o.dataset.aaCombo === c.key);
+			if (!fits) {
+				if (opt) {
+					const was = opt.selected;
+					opt.remove();
+					if (was) sel.value = String(c.first);
+				}
+				continue;
+			}
+			if (opt) continue;
+			const first = [...sel.options].find((o) => o.value === String(c.first) && !o.dataset.aaCombo);
+			const o = new Option(c.name, String(c.first));
+			o.dataset.aaCombo = c.key;
+			first.after(o);
+		}
+		updateComboInfo();
+	}
+
+	// Line next to the skill list: damage and time of the sequence.
+	const comboInfo = h("div", { class: "aa-comboinfo" });
+	function updateComboInfo() {
+		const sel = form.A_ActiveSkill;
+		const combo = activeCombo();
+		if (!combo || !sel) {
+			comboInfo.remove();
+			return;
+		}
+		const anchor = form.A_ActiveSkillLV || sel;
+		if (anchor.nextElementSibling !== comboInfo) anchor.after(comboInfo);
+		simulating = true;
+		let a;
+		try {
+			origCalc();
+			a = attackNow();
+		} finally {
+			simulating = false;
+		}
+		const names = [combo.first, ...combo.then].map((id) => ([...sel.options].find((o) => o.value === String(id) && !o.dataset.aaCombo) || { text: id }).text.trim());
+		comboInfo.textContent =
+			names.map((n, i) => `${n} ${(a.parts[i] || { hit: 0 }).hit.toFixed(0)}`).join(" + ") +
+			` = ${a.hit.toFixed(0)} Schaden in ${a.interval.toFixed(2)} s → ${(a.interval > 0 ? a.hit / a.interval : a.hit).toFixed(1)} DPS`;
+		comboInfo.title = "Das Ergebnis des Combat Simulators zeigt nur den ersten Skill; Vorschau, Optimierer und Vergleiche rechnen mit der ganzen Folge.";
 	}
 
 	function metricUnit(metric) {
@@ -1193,7 +1295,7 @@
 		// Only select rebuilds count: added / removed selects, options or optgroups.
 		// Result texts the calculator rewrites after every calc() (HP, ATK, ...) and
 		// the add-on's own elements are ignored.
-		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, option[data-aa-shadow]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv"));
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, .aa-comboinfo, option[data-aa-shadow], option[data-aa-combo]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv"));
 		const selectish = (n) => n.nodeType === 1 && !ours(n) && (n.matches("select, option, optgroup") || Boolean(n.querySelector("select")));
 		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && [...r.addedNodes, ...r.removedNodes].some(selectish);
 		if (!records.some(relevant)) return;
@@ -1473,6 +1575,7 @@
 			updateHeadShadows();
 			syncCombos();
 			updateSwapButton();
+			updateSkillCombos();
 			updateStatSteppers();
 			updateStatGains();
 			renderBuildCompare();
@@ -2620,8 +2723,17 @@
 	// equipment with refine and cards, ammo, skill, buffs). The monster is kept
 	// as it is when loading or comparing, so builds are compared on one target.
 
+	// A skill combo (SKILL_COMBOS) isn't part of the calculator's URL code; it is
+	// kept as a suffix that loadBuildCode() takes off again.
+	const COMBO_MARK = "|aa-combo=";
+
 	// Current character as URL code, without URLOUT's alert and address change.
 	function captureBuild() {
+		const combo = activeCombo();
+		return captureCalcCode() + (combo ? COMBO_MARK + combo.key : "");
+	}
+
+	function captureCalcCode() {
 		const href = location.href;
 		const field = form.elements.namedItem("URL_TEXT");
 		const old = field ? field.value : "";
@@ -2639,9 +2751,10 @@
 
 	// Loads a URL code through the calculator's "Load URL from another Calc",
 	// keeping the current monster.
-	function loadBuildCode(code) {
+	function loadBuildCode(fullCode) {
 		const input = document.getElementById("otherURL_TEXT");
 		if (!input || typeof URLIN !== "function") return false;
+		const [code, comboKey] = String(fullCode).split(COMBO_MARK);
 		const old = input.value;
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		input.value = location.href.split("#")[0] + "#" + code;
@@ -2651,6 +2764,11 @@
 			if (enemy != null && form.B_Enemy.value !== enemy) {
 				form.B_Enemy.value = enemy;
 				if (typeof Bskill === "function") Bskill();
+			}
+			if (comboKey) {
+				updateSkillCombos();
+				const opt = [...form.A_ActiveSkill.options].find((o) => o.dataset.aaCombo === comboKey);
+				if (opt) opt.selected = true;
 			}
 			window.calc();
 		} finally {
@@ -3116,8 +3234,16 @@
 	// calculator does when a skill is picked).
 	function applyPartySkill(skill) {
 		const sel = form.A_ActiveSkill;
-		if (skill == null || songOf(skill) || !sel || !hasOption(sel, skill) || sel.value === String(skill)) return;
-		sel.value = String(skill);
+		if (skill == null || songOf(skill) || !sel) return;
+		updateSkillCombos();
+		if (String(skill).startsWith(COMBO_PREFIX)) {
+			const opt = [...sel.options].find((o) => o.dataset.aaCombo === String(skill).slice(COMBO_PREFIX.length));
+			if (!opt || opt.selected) return;
+			opt.selected = true;
+		} else {
+			if (!hasOption(sel, skill) || (sel.value === String(skill) && !activeCombo())) return;
+			sel.value = String(skill);
+		}
 		if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
 	}
 
@@ -3202,10 +3328,12 @@
 		const cacheSkills = (m) => {
 			const sel = form.A_ActiveSkill;
 			if (!sel || partySkills.has(m.build)) return;
+			updateSkillCombos();
 			const kind = performerKind(n_A_JOB);
+			const ownCombo = activeCombo();
 			partySkills.set(m.build, {
-				own: sel.value,
-				options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.value, text: o.text.trim() })),
+				own: ownCombo ? COMBO_PREFIX + ownCombo.key : sel.value,
+				options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.dataset.aaCombo ? COMBO_PREFIX + o.dataset.aaCombo : o.value, text: o.text.trim() })),
 				songs: kind == null ? [] : SONGS.filter((x) => x.bard === kind),
 				kind,
 			});
@@ -3251,8 +3379,7 @@
 				} finally {
 					simulating = false;
 				}
-				const hit = Number(typeof w_DMG !== "undefined" && w_DMG[1]) || 0;
-				const interval = (Number(typeof wCast !== "undefined" && wCast) || 0) + (Number(typeof wDelay !== "undefined" && wDelay) || 0);
+				const { hit, interval } = attackNow();
 				pb.results.set(m.uid, { hit, interval, dps: interval > 0 ? hit / interval : hit, skill: sel && sel.selectedOptions[0] ? sel.selectedOptions[0].text.trim() : "", ...takenNow() });
 			}
 		} finally {

@@ -479,3 +479,6 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbstart { width: 46px; text-align: right; }
 .aa-pbens label { margin-right: 10px; white-space: nowrap; }
 .aa-pbsongs { margin-top: 2px; }
+
+/* Skill combo (e.g. Double Strafe -> Beast Strafing) */
+.aa-comboinfo { margin-top: 3px; font: 11px/1.3 sans-serif; font-variant-numeric: tabular-nums; opacity: 0.85; }

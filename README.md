@@ -61,6 +61,11 @@ Monster. Maßstab (im Header neben den Filtern oder im Panel einstellbar):
 | Effektive HP | Max HP ÷ Ø erlittener Schaden = Treffer des Monster-Angriffs bis K.O. (HP, DEF/MDEF, Reduktionen, Ausweichen) |
 | Herstellungs-Erfolg | Erfolgschance nach den Formeln aus „Other Info“: Forging (Blacksmith), Potions (Alchemist), EDP/Poison Bottle (Assassin Cross), sonst Cooking; ungekappt, damit sich Items auch bei 0 % bzw. 100 % unterscheiden |
 
+Hunter und Sniper haben in der Skill-Auswahl zusätzlich **Double Strafe → Beast Strafing**: Beast Strafing geht im
+Spiel nur direkt nach einer Double Strafe, daher rechnet das Add-on beide Skills als Folge (Schaden beider ÷ Zeit
+beider). Eine Zeile unter der Skill-Auswahl zeigt die Aufteilung; Vorschau, Optimierer, Stat-Vorschlag, Build-Vergleich
+und Party-Battle rechnen mit der ganzen Folge, gespeicherte Builds merken sich die Auswahl.
+
 ## Installation
 
 Die signierte Fassung liegt unter den
