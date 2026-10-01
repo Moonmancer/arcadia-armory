@@ -477,6 +477,8 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-pbatk { max-width: 260px; }
 .aa-pbeq { width: 48px; }
 .aa-pbstart { width: 46px; text-align: right; }
+.aa-pbtable .aa-pbgospel { text-align: center; }
+.aa-pbtable th.aa-pbgospel { white-space: normal; width: 62px; line-height: 1.2; }
 .aa-pbens label { margin-right: 10px; white-space: nowrap; }
 .aa-pbsongs { margin-top: 2px; }
 

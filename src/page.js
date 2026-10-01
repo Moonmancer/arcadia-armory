@@ -368,7 +368,7 @@
 		lastAmmo: {}, // last chosen ammo per ammo kind ("arrow" | "bullet" | "grenade") -> A_Arrow value
 		woe: false, // hide items disabled in pre-trans WoE (woe-blacklist.js)
 		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
-		party: [], // "Party-Battle" members: { uid, build, skill, start } (skill null = the build's own; start = attacks from this % of the monster's HP, default 100)
+		party: [], // "Party-Battle" members: { uid, build, skill, start, gospel: { stats, atk } } (skill null = the build's own; start = attacks from this % of the monster's HP, default 100)
 		partyEnsembles: [], // ENSEMBLES keys switched on in the Party-Battle
 		partyMonsterAtk: null, // B_AtkSkill value for the Party-Battle (null = as in the calculator)
 		partyEqPlayers: null, // "Players in Range" for Earth Quake in the Party-Battle (null = party size)
@@ -3267,6 +3267,27 @@
 		if (typeof Buf3SW === "function" && typeof n_Skill3SW !== "undefined") quietly(() => Buf3SW(n_Skill3SW));
 	}
 
+	// Gospel effects of a Paladin ("Supportive / Party Skills"): n_A_Buf2[16] =
+	// All Stats +20, n_A_Buf2[19] = ATK +100%. Per member: null = as the build
+	// was saved, true / false = switched on / off in the Party-Battle.
+	const GOSPEL = { stats: 16, atk: 19 };
+
+	function buildGospel() {
+		return typeof n_A_Buf2 === "undefined" ? { stats: false, atk: false } : { stats: Boolean(n_A_Buf2[GOSPEL.stats]), atk: Boolean(n_A_Buf2[GOSPEL.atk]) };
+	}
+
+	function applyGospel(g) {
+		if (!g || typeof n_A_Buf2 === "undefined") return;
+		let changed = false;
+		for (const [k, idx] of Object.entries(GOSPEL)) {
+			if (g[k] == null || Boolean(n_A_Buf2[idx]) === g[k]) continue;
+			n_A_Buf2[idx] = g[k] ? 1 : 0;
+			changed = true;
+		}
+		// An open "Supportive / Party Skills" section is read by calc(): redraw it.
+		if (changed && typeof BufSW === "function" && typeof n_SkillSW !== "undefined" && n_SkillSW) quietly(() => BufSW(n_SkillSW));
+	}
+
 	// Puts the member's attack skill on the loaded build (max level, as the
 	// calculator does when a skill is picked).
 	function applyPartySkill(skill) {
@@ -3371,6 +3392,7 @@
 			const kind = performerKind(n_A_JOB);
 			const ownCombo = activeCombo();
 			partySkills.set(m.build, {
+				gospel: buildGospel(),
 				own: ownCombo ? COMBO_PREFIX + ownCombo.key : sel.value,
 				options: [...sel.options].filter((o) => !o.disabled).map((o) => ({ value: o.dataset.aaCombo ? COMBO_PREFIX + o.dataset.aaCombo : o.value, text: o.text.trim() })),
 				songs: kind == null ? [] : SONGS.filter((x) => x.bard === kind),
@@ -3386,6 +3408,13 @@
 				loadBuildCode(codeOf(m.b, current));
 				cacheSkills(m);
 				if (!song || performerKind(n_A_JOB) !== song.bard) continue;
+				applyGospel(m.gospel);
+				simulating = true;
+				try {
+					origCalc(); // stats with Gospel for the song
+				} finally {
+					simulating = false;
+				}
 				played.push({ ...songFromCurrent(song), uid: m.uid });
 				applyMonsterAtk();
 				simulating = true;
@@ -3410,6 +3439,7 @@
 					played.filter((p) => p.uid !== m.uid),
 					ensembles
 				);
+				applyGospel(m.gospel);
 				applyMonsterAtk();
 				const sel = form.A_ActiveSkill;
 				simulating = true;
@@ -3462,6 +3492,7 @@
 		loadBuildCode(m.b.code);
 		applyPartySkill(m.skill);
 		if (!songOf(m.skill)) applySongs((pb.played || []).filter((p) => p.uid !== m.uid), partyEnsembleState().active);
+		applyGospel(m.gospel);
 		setMonsterAtk(atk, sub);
 		window.calc();
 	}
@@ -3622,6 +3653,20 @@
 			h("td", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters (inkl. Ausweichen)" }, r ? r.recv.toFixed(1) : "–"),
 			h("td", { class: "aa-num", title: r ? `Max HP ${r.maxHp.toLocaleString("en-US")} ÷ erlittener Schaden` : "" }, r ? (Number.isFinite(r.hits) ? r.hits.toFixed(1) : "∞") : "–"),
 		];
+		const gospelCell = (m, key, label) => {
+			const own = (partySkills.get(m.build) || {}).gospel;
+			const set = m.gospel && m.gospel[key] != null ? m.gospel[key] : null;
+			const on = set != null ? set : Boolean(own && own[key]);
+			return h(
+				"td",
+				{ class: "aa-pbgospel", title: `Gospel ${label}` + (set == null ? " – wie im Build gespeichert" : " – im Party-Battle gesetzt") },
+				h("input", {
+					type: "checkbox",
+					checked: on,
+					onchange: (e) => updatePartyMember(m.uid, { gospel: { ...(m.gospel || {}), [key]: e.target.checked } }),
+				})
+			);
+		};
 		const row = (m) => {
 			const r = pb.results.get(m.uid);
 			const skills = partySkills.get(m.build);
@@ -3658,6 +3703,8 @@
 					{ class: "aa-pbsupport" },
 					h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
 					h("td", null, skillSel),
+					gospelCell(m, "stats", "All Stats +20"),
+					gospelCell(m, "atk", "ATK +100%"),
 					h("td", { colspan: "4", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
 					takenCells(r),
 					h(
@@ -3673,6 +3720,8 @@
 				null,
 				h("td", null, h("strong", null, m.b.name), h("div", { class: "aa-dim" }, m.b.job)),
 				h("td", null, skillSel),
+				gospelCell(m, "stats", "All Stats +20"),
+				gospelCell(m, "atk", "ATK +100%"),
 				h("td", { class: "aa-num" }, r ? r.hit.toFixed(1) : "–"),
 				h("td", { class: "aa-num", title: r && r.interval > 0 ? `alle ${r.interval.toFixed(2)} s` : "" }, r ? r.dps.toFixed(1) : "–"),
 				startCell,
@@ -3704,7 +3753,7 @@
 						h(
 							"table",
 							{ class: "aa-pbtable" },
-							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", { class: "aa-num", title: "Greift ab diesem Anteil der Monster-HP an (Standard 100 %)" }, "DPS ab % HP"), h("th", null, "Anteil"), h("th", { class: "aa-num" }, "Max HP"), h("th", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters" }, "erlitten"), h("th", { class: "aa-num", title: "Treffer des Monster-Angriffs bis K.O. (Max HP ÷ erlittener Schaden)" }, "Treffer bis K.O."), h("th", null, ""))),
+							h("thead", null, h("tr", null, h("th", null, "Mitglied"), h("th", null, "Skill"), h("th", { class: "aa-pbgospel", title: "Gospel: All Stats +20" }, "Gospel +20 Stats"), h("th", { class: "aa-pbgospel", title: "Gospel: ATK +100%" }, "Gospel +100% ATK"), h("th", { class: "aa-num", title: "Ø Schaden pro Treffer" }, "Schaden/Treffer"), h("th", { class: "aa-num", title: "Ø Schaden pro Sekunde" }, "DPS"), h("th", { class: "aa-num", title: "Greift ab diesem Anteil der Monster-HP an (Standard 100 %)" }, "DPS ab % HP"), h("th", null, "Anteil"), h("th", { class: "aa-num" }, "Max HP"), h("th", { class: "aa-num", title: "Ø erlittener Schaden pro Angriff des Monsters" }, "erlitten"), h("th", { class: "aa-num", title: "Treffer des Monster-Angriffs bis K.O. (Max HP ÷ erlittener Schaden)" }, "Treffer bis K.O."), h("th", null, ""))),
 							h("tbody", null, members.map(row))
 						)
 				  )
