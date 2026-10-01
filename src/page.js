@@ -2778,6 +2778,21 @@
 
 	// Loads a URL code through the calculator's "Load URL from another Calc",
 	// keeping the current monster.
+	// Collapsible buff sections of the calculator: open-state variable and the
+	// function that opens / closes it. URLIN() closes them all.
+	const SECTIONS = [
+		["n_SkillSW", "BufSW"],
+		["n_Skill3SW", "Buf3SW"],
+		["n_Skill4SW", "Buf4SW"],
+		["n_Skill6SW", "Buf6SW"],
+		["n_Skill7SW", "Buf7SW"],
+		["n_Skill8SW", "Buf8SW"],
+		["n_Skill9SW", "Buf9SW"],
+		["n_Skill10SW", "Buf10SW"],
+		["n_debufSW", "debufSW"],
+		["n_BbufSW", "EnemyBufSW"],
+	];
+
 	function loadBuildCode(fullCode) {
 		const input = document.getElementById("otherURL_TEXT");
 		if (!input || typeof URLIN !== "function") return false;
@@ -2785,9 +2800,12 @@
 		const old = input.value;
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
 		input.value = location.href.split("#")[0] + "#" + code;
+		const open = SECTIONS.filter(([v]) => window[v]);
 		applying = true;
 		try {
 			URLIN(1);
+			// Sections that were open stay open (drawn with the loaded values).
+			for (const [v, fn] of open) if (!window[v] && typeof window[fn] === "function") quietly(() => window[fn](1));
 			if (enemy != null && form.B_Enemy.value !== enemy) {
 				form.B_Enemy.value = enemy;
 				if (typeof Bskill === "function") Bskill();
