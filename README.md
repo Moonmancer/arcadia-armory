@@ -32,8 +32,9 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    Mitglied mit eigenem Angriffs-Skill. Links die Monster-Karte mit HP, summierter Party-DPS, Zeit bis zum
    Kill und Kills pro Minute, rechts Schaden/Treffer, DPS und Anteil je Mitglied.
    Bard/Minstrel und Dancer/Gypsy können statt eines Angriffs einen Support-Song spielen (A Whistle, Assassin
-   Cross of Sunset, Poem of Bragi, Apple of Idun, Humming, Fortune's Kiss, Service for You, Please Don't
-   Forget Me): Er wirkt mit Level 10, den Stats und der Music/Dance Lessons des Builds auf alle anderen Mitglieder.
+   Cross of Sunset, Poem of Bragi, Apple of Idun, Humming, Fortune's Kiss, Service for You): Er wirkt mit Level 10,
+   den Stats und der Music/Dance Lessons des Builds auf alle anderen Mitglieder. Der Tooltip über „♪ spielt …“
+   zeigt die Stats des Performers (Basis + Bonus) und was der Song daraus macht.
    Mit Bard/Minstrel und Dancer/Gypsy in der Party lassen sich die Ensembles Invulnerable Siegfried, A Drum on
    the Battlefield und The Ring of Nibelungen (Level 5) zuschalten. Eine Auswahl des Monster-Angriffs bestimmt
    je Mitglied Max HP, erlittenen Schaden und Treffer bis K.O.

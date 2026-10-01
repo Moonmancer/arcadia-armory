@@ -3362,7 +3362,8 @@
 	// "Music and Dance Skills" keep them in n_A_Buf3: song level, the performer's
 	// stats the effect scales with and Music / Dance Lessons. A performing member
 	// deals no damage; every other member gets the songs (not the performer
-	// itself, as in the game). Ensembles need two performers and are left out.
+	// itself, as in the game). Please Don't Forget Me slows enemies (the
+	// calculator models it as a penalty on the character), so it isn't offered.
 	const SONGS = [
 		{ key: "whistle", name: "A Whistle", bard: true, lv: 0, lessons: 30, stats: [[20, "AGI"], [19, "LUK"]] },
 		{ key: "acos", name: "Assassin Cross of Sunset", bard: true, lv: 1, lessons: 31, stats: [[21, "AGI"]] },
@@ -3371,7 +3372,6 @@
 		{ key: "humming", name: "Humming", bard: false, lv: 4, lessons: 34, stats: [[24, "DEX"]] },
 		{ key: "kiss", name: "Fortune's Kiss", bard: false, lv: 5, lessons: 35, stats: [[25, "LUK"]] },
 		{ key: "service", name: "Service for You", bard: false, lv: 6, lessons: 36, stats: [[26, "INT"]] },
-		{ key: "pdfm", name: "Please Don't Forget Me", bard: false, lv: 37, lessons: 27, stats: [[38, "DEX"], [39, "AGI"]] },
 	];
 	// Ensembles (Bard/Minstrel + Dancer/Gypsy together), level 5. Mr. Kim A Rich
 	// Man (EXP only) is left out.
@@ -3391,16 +3391,64 @@
 		return null;
 	}
 
+	// What a song gives the others, with the calculator's PvM formulas:
+	// [[label, value, formula text]].
+	function songEffect(key, lv, L, st) {
+		const f = Math.floor;
+		const r = Math.round;
+		switch (key) {
+			case "whistle":
+				return [
+					["FLEE", `+${lv + f(L / 2) + f(st.AGI / 10)}`, `Lv ${lv} + Lessons/2 ${f(L / 2)} + AGI/10 ${f(st.AGI / 10)}`],
+					["Perfect Dodge", `+${r(lv / 2) + f(st.LUK / 10) + f(L / 2)}`, `Lv/2 ${r(lv / 2)} + LUK/10 ${f(st.LUK / 10)} + Lessons/2 ${f(L / 2)}`],
+				];
+			case "acos":
+				return [["ASPD", `+${10 + lv + r(L / 2) + r(st.AGI / 10)} %`, `10 + Lv ${lv} + Lessons/2 ${r(L / 2)} + AGI/10 ${r(st.AGI / 10)} (nicht mit Bogen / Schusswaffen)`]];
+			case "bragi":
+				return [
+					["Cast-Zeit", `−${3 * lv + L + f(st.DEX / 10)} %`, `3×Lv ${3 * lv} + Lessons ${L} + DEX/10 ${f(st.DEX / 10)}`],
+					["After-Cast-Delay", `−${(lv === 10 ? 5 : 3) * lv + 2 * L + f(st.INT / 5)} %`, `${lv === 10 ? 5 : 3}×Lv ${(lv === 10 ? 5 : 3) * lv} + 2×Lessons ${2 * L} + INT/5 ${f(st.INT / 5)}`],
+				];
+			case "idun":
+				return [["Max HP", `+${5 + 2 * lv + L + f(st.VIT / 10)} %`, `5 + 2×Lv ${2 * lv} + Lessons ${L} + VIT/10 ${f(st.VIT / 10)}`]];
+			case "humming":
+				return [["HIT", `+${10 + 2 * lv + L + f(st.DEX / 10)}`, `10 + 2×Lv ${2 * lv} + Lessons ${L} + DEX/10 ${f(st.DEX / 10)}`]];
+			case "kiss":
+				return [["CRIT", `+${10 + lv + f(L / 2) + f(st.LUK / 10)}`, `10 + Lv ${lv} + Lessons/2 ${f(L / 2)} + LUK/10 ${f(st.LUK / 10)}`]];
+			case "service":
+				return [["Max SP", `+${15 + lv + f(L / 2) + f(st.INT / 10)} %`, `15 + Lv ${lv} + Lessons/2 ${f(L / 2)} + INT/10 ${f(st.INT / 10)}`]];
+		}
+		return [];
+	}
+
+	// Tooltip of a performing member: the song's stats (base + bonus = total),
+	// lessons and what the others get.
+	function songTooltip(p) {
+		const lessonsName = p.song.bard ? "Music Lessons" : "Dance Lessons";
+		const lines = [`${p.song.name} (Lv 10)`, ""];
+		for (const d of p.detail) lines.push(`${d.name}: ${d.base} + ${d.bonus} = ${d.total}` + (d.used !== d.total ? ` (zählt mit ${d.used})` : ""));
+		lines.push(`${lessonsName}: ${p.lessons}`, "", "Wirkung auf alle anderen Mitglieder:");
+		const used = Object.fromEntries(p.detail.map((d) => [d.name, d.used]));
+		for (const [label, value, formula] of songEffect(p.song.key, 10, p.lessons, used)) lines.push(`${label} ${value}  (${formula})`);
+		return lines.join("\n");
+	}
+
 	// Song as the loaded (performing) build plays it: level 10, its final stats,
 	// its Music / Dance Lessons level (10 when the calculator has no such field).
 	function songFromCurrent(song) {
 		const lessonsId = typeof SKILLID !== "undefined" ? (song.bard ? SKILLID.BA_MUSICALLESSON : SKILLID.DC_DANCINGLESSON) : null;
 		const known = typeof m_JobBuff !== "undefined" && m_JobBuff[n_A_JOB] && m_JobBuff[n_A_JOB].includes(lessonsId);
 		const stat = { AGI: n_A_AGI, LUK: n_A_LUK, DEX: n_A_DEX, INT: n_A_INT, VIT: n_A_VIT };
+		const clamp = (name, max) => Math.max(1, Math.min(max || 200, Math.round(stat[name]) || 1));
 		return {
 			song,
 			lessons: known && typeof SkillSearch === "function" ? SkillSearch(lessonsId) : 10,
-			stats: song.stats.map(([idx, name, max]) => [idx, Math.max(1, Math.min(max || 200, Math.round(stat[name]) || 1))]),
+			stats: song.stats.map(([idx, name, max]) => [idx, clamp(name, max)]),
+			detail: song.stats.map(([, name, max]) => {
+				const base = Number((el("A_" + name) || {}).value) || 0;
+				const total = Math.round(stat[name]) || 0;
+				return { name, base, bonus: total - base, total, used: clamp(name, max) };
+			}),
 		};
 	}
 
@@ -3585,7 +3633,8 @@
 				} finally {
 					simulating = false;
 				}
-				played.push({ ...songFromCurrent(song), uid: m.uid });
+				const p = { ...songFromCurrent(song), uid: m.uid };
+				played.push(p);
 				applyMonsterAtk();
 				simulating = true;
 				try {
@@ -3593,7 +3642,7 @@
 				} finally {
 					simulating = false;
 				}
-				pb.results.set(m.uid, { hit: 0, interval: 0, dps: 0, song: song.name, ...takenNow() });
+				pb.results.set(m.uid, { hit: 0, interval: 0, dps: 0, song: song.name, songTip: songTooltip(p), ...takenNow() });
 			}
 			const ensembles = partyEnsembleState().active;
 			pb.ensembles = ensembles.map((e) => e.name);
@@ -3898,7 +3947,7 @@
 					h("td", null, skillSel),
 					gospelCell(m, "stats", "All Stats +20"),
 					gospelCell(m, "atk", "ATK +100%"),
-					h("td", { colspan: "4", class: "aa-dim" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
+					h("td", { colspan: "4", class: "aa-dim aa-pbsongtext", title: r.songTip || "" }, `♪ spielt ${r.song} – wirkt auf alle anderen Mitglieder`),
 					takenCells(r),
 					h(
 						"td",
