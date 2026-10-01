@@ -381,6 +381,7 @@
 		items: [],
 		unmatched: [],
 		builds: [], // saved characters: { id, name, job, code, savedAt }
+		snapshots: [], // snapshots of the current character used in the build comparison / Party-Battle: { id, name, job, code, savedAt, snapshot: true }
 		settings: { ...DEFAULT_SETTINGS },
 	};
 	let ownedById = new Map(); // calcId -> [instances]
@@ -394,7 +395,7 @@
 	}
 
 	function save() {
-		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, builds: state.builds, settings: state.settings } }, window.location.origin);
+		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, builds: state.builds, snapshots: state.snapshots, settings: state.settings } }, window.location.origin);
 	}
 
 	window.addEventListener("message", (event) => {
@@ -411,6 +412,7 @@
 		state.items = Array.isArray(d.items) ? d.items : [];
 		state.unmatched = Array.isArray(d.unmatched) ? d.unmatched : [];
 		state.builds = Array.isArray(d.builds) ? d.builds : [];
+		state.snapshots = Array.isArray(d.snapshots) ? d.snapshots : [];
 		state.settings = { ...DEFAULT_SETTINGS, ...(d.settings || {}) };
 		applyTheme(state.settings.theme);
 		rebuildOwned();
@@ -428,14 +430,9 @@
 	let simulating = false;
 	let applying = false; // set while the panel equips an exact instance
 	let calcVersion = 0;
-	// Changes of the character outside the build comparison / Party-Battle
-	// calculations (which load other builds and restore the current one).
-	let userVersion = 0;
-	let evaluatingBuilds = 0;
 
 	function invalidate() {
 		calcVersion++;
-		if (!evaluatingBuilds) userVersion++;
 		scheduleComboSync();
 	}
 
@@ -2927,20 +2924,57 @@
 	// The character currently set up in the calculator, usable like a saved build
 	// in the build comparison and the Party-Battle. Its code is taken when the
 	// calculation starts, so the comparison shows the state of that moment.
+	// "Aktueller Charakter" in the build searches takes a snapshot of the current
+	// character: a build that only lives in the build comparison / Party-Battle
+	// and can be loaded or overwritten with the current character again.
 	const CURRENT_ID = "current";
 	const currentPseudo = () => ({ id: CURRENT_ID, name: "Aktueller Charakter", job: jobName(), current: true });
-	const lookupBuild = (id) => (id === CURRENT_ID ? currentPseudo() : state.builds.find((b) => b.id === id));
-	const codeOf = (b, current) => (b.current ? current : b.code);
+	const lookupBuild = (id) => state.builds.find((b) => b.id === id) || state.snapshots.find((b) => b.id === id);
+
+	function snapshotLabel(at) {
+		const d = new Date(at);
+		return `Snapshot ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+	}
+
+	function takeSnapshot() {
+		const at = Date.now();
+		const snap = { id: "snap-" + Math.random().toString(36).slice(2, 10), name: snapshotLabel(at), job: jobName(), code: captureBuild(), savedAt: at, snapshot: true };
+		state.snapshots = [...state.snapshots, snap];
+		save();
+		return snap;
+	}
+
+	// Overwrites a snapshot with the current character and recalculates where it is used.
+	function overwriteSnapshot(id) {
+		const snap = state.snapshots.find((x) => x.id === id);
+		if (!snap) return;
+		snap.code = captureBuild();
+		snap.job = jobName();
+		snap.savedAt = Date.now();
+		snap.name = snapshotLabel(snap.savedAt);
+		partySkills.delete(id);
+		save();
+		if (state.settings.compareBuilds.includes(id)) {
+			evaluateBuilds([snap]).forEach((v, k) => bv.results.set(k, v));
+			renderBuildCompare();
+		}
+		if (state.settings.party.some((m) => m.build === id)) evaluateParty();
+	}
+
+	// Snapshots that are in neither section anymore are dropped.
+	function pruneSnapshots() {
+		const used = new Set([...state.settings.compareBuilds, ...state.settings.party.map((m) => m.build)]);
+		state.snapshots = state.snapshots.filter((x) => used.has(x.id));
+	}
 
 	// Metrics and combat box of each build against the current monster; the
 	// current character is restored afterwards.
 	function evaluateBuilds(builds) {
-		evaluatingBuilds++;
 		const current = captureBuild();
 		const out = new Map();
 		try {
 			for (const b of builds) {
-				loadBuildCode(codeOf(b, current));
+				loadBuildCode(b.code);
 				out.set(b.id, { ...currentMetrics(), box: snapshotCombatBox() });
 			}
 		} finally {
@@ -2948,7 +2982,6 @@
 			// The loads rebuilt selects; refreshSelects() already ran, so these are not
 			// a change the user made (would mark the comparison as outdated).
 			formObserver.takeRecords();
-			evaluatingBuilds--;
 		}
 		return out;
 	}
@@ -3118,7 +3151,6 @@
 		const builds = state.settings.compareBuilds.map(lookupBuild).filter(Boolean);
 		bv.results = evaluateBuilds(builds);
 		bv.enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		bv.version = userVersion;
 		renderBuildCompare();
 	}
 
@@ -3129,12 +3161,10 @@
 		const b = lookupBuild(id);
 		if (b) {
 			const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-			const currentOutdated = state.settings.compareBuilds.includes(CURRENT_ID) && bv.version !== userVersion;
-			if ((bv.enemy != null && bv.enemy !== enemy) || currentOutdated) computeBuildCompare(); // others are outdated too
+			if (bv.enemy != null && bv.enemy !== enemy) computeBuildCompare(); // others are outdated too
 			else {
 				evaluateBuilds([b]).forEach((v, k) => bv.results.set(k, v));
 				bv.enemy = enemy;
-				bv.version = userVersion;
 			}
 		}
 		renderBuildCompare();
@@ -3143,13 +3173,14 @@
 	function removeFromCompare(id) {
 		state.settings.compareBuilds = state.settings.compareBuilds.filter((x) => x !== id);
 		bv.results.delete(id);
+		pruneSnapshots();
 		save();
 		renderBuildCompare();
 	}
 
 	const bvSearch = buildSearch({
-		getBuilds: () => [currentPseudo(), ...state.builds].filter((b) => !state.settings.compareBuilds.includes(b.id)),
-		onPick: (b) => addToCompare(b.id),
+		getBuilds: () => [currentPseudo(), ...state.builds.filter((b) => !state.settings.compareBuilds.includes(b.id))],
+		onPick: (b) => addToCompare(b.current ? takeSnapshot().id : b.id),
 		placeholder: "Build zum Vergleich hinzufügen – Name oder Klasse …",
 	});
 
@@ -3158,8 +3189,7 @@
 		const chosen = state.settings.compareBuilds.map(lookupBuild).filter(Boolean);
 		const monster = form.B_Enemy ? form.B_Enemy.selectedOptions[0].text : "";
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		const currentChanged = chosen.some((b) => b.current) && bv.results.has(CURRENT_ID) && bv.version !== userVersion;
-		const stale = chosen.length > 0 && (bv.enemy !== enemy || currentChanged || chosen.some((b) => !bv.results.has(b.id)));
+		const stale = chosen.length > 0 && (bv.enemy !== enemy || chosen.some((b) => !bv.results.has(b.id)));
 
 		const card = (b) => {
 			const res = bv.results.get(b.id);
@@ -3170,7 +3200,8 @@
 					"div",
 					{ class: "aa-bvhead" },
 					h("div", { class: "aa-bvname" }, h("strong", null, b.name), h("div", { class: "aa-dim" }, b.job)),
-					b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadBuildCode(b.code) }, "Laden"),
+					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadBuildCode(b.code) }, "Laden"),
+					b.snapshot ? h("button", { type: "button", class: "aa-btn aa-small", title: "Snapshot mit dem aktuellen Charakter überschreiben", onclick: () => overwriteSnapshot(b.id) }, "Überschreiben") : null,
 					h("button", { type: "button", class: "aa-x", title: "Aus dem Vergleich entfernen", onclick: () => removeFromCompare(b.id) }, "×")
 				),
 				res && res.box ? res.box : h("p", { class: "aa-hint aa-bvempty" }, "Noch nicht berechnet – „Neu berechnen“ klicken.")
@@ -3184,7 +3215,7 @@
 				bvSearch,
 				chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
 				h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
-				stale ? h("span", { class: "aa-warn" }, currentChanged && bv.enemy === enemy ? "Aktueller Charakter geändert – neu berechnen" : "Monster geändert – neu berechnen") : null
+				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
 			),
 			state.builds.length === 0 && !chosen.length
 				? h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen. Builds speichern: Armory-Panel → „Builds“ (oder die Calculator-Saves importieren).")
@@ -3374,7 +3405,6 @@
 
 	function evaluateParty() {
 		const members = partyMembers();
-		evaluatingBuilds++;
 		const current = captureBuild();
 		const atkBefore = form.B_AtkSkill ? form.B_AtkSkill.value : null;
 		const subBefore = form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
@@ -3384,7 +3414,6 @@
 		pb.eq = EARTHQUAKE.has(String(pb.atk)) ? partyAtk.sub : null;
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		partySkills.delete(CURRENT_ID); // its class / skills may have changed
 		const cacheSkills = (m) => {
 			const sel = form.A_ActiveSkill;
 			if (!sel || partySkills.has(m.build)) return;
@@ -3405,7 +3434,7 @@
 			for (const m of members) {
 				const song = songOf(m.skill);
 				if (!song && partySkills.has(m.build)) continue;
-				loadBuildCode(codeOf(m.b, current));
+				loadBuildCode(m.b.code);
 				cacheSkills(m);
 				if (!song || performerKind(n_A_JOB) !== song.bard) continue;
 				applyGospel(m.gospel);
@@ -3432,7 +3461,7 @@
 			// 2) Everyone else, with the songs of the other members.
 			for (const m of members) {
 				if (pb.results.has(m.uid)) continue;
-				loadBuildCode(codeOf(m.b, current));
+				loadBuildCode(m.b.code);
 				cacheSkills(m);
 				applyPartySkill(m.skill);
 				applySongs(
@@ -3458,9 +3487,7 @@
 				window.calc();
 			}
 			formObserver.takeRecords();
-			evaluatingBuilds--;
 		}
-		pb.version = userVersion;
 		pb.hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
 		renderParty();
 	}
@@ -3481,6 +3508,7 @@
 	function removePartyMember(uid) {
 		state.settings.party = state.settings.party.filter((m) => m.uid !== uid);
 		pb.results.delete(uid);
+		pruneSnapshots();
 		save();
 		renderParty();
 	}
@@ -3537,7 +3565,7 @@
 
 	const partySearch = buildSearch({
 		getBuilds: () => [currentPseudo(), ...state.builds],
-		onPick: (b) => addPartyMember(b.id),
+		onPick: (b) => addPartyMember(b.current ? takeSnapshot().id : b.id),
 		placeholder: "Build zur Party hinzufügen – Name oder Klasse …",
 	});
 
@@ -3555,8 +3583,7 @@
 			setTimeout(evaluateParty, 0);
 		}
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		const currentChanged = members.some((m) => m.b.current) && pb.results.size > 0 && pb.version !== userVersion;
-		const stale = members.length > 0 && (pb.enemy !== enemy || currentChanged || members.some((m) => !pb.results.has(m.uid)));
+		const stale = members.length > 0 && (pb.enemy !== enemy || members.some((m) => !pb.results.has(m.uid)));
 		const monster = form.B_Enemy && form.B_Enemy.selectedOptions[0] ? form.B_Enemy.selectedOptions[0].text.trim() : "";
 		const known = members.map((m) => pb.results.get(m.uid)).filter(Boolean);
 		const total = known.reduce((sum, r) => sum + r.dps, 0);
@@ -3710,7 +3737,8 @@
 					h(
 						"td",
 						{ class: "aa-bvactions" },
-						m.b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+						h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+						m.b.snapshot ? h("button", { type: "button", class: "aa-btn aa-small", title: "Snapshot mit dem aktuellen Charakter überschreiben", onclick: () => overwriteSnapshot(m.b.id) }, "Überschreiben") : null,
 						h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
 					)
 				);
@@ -3730,7 +3758,8 @@
 				h(
 					"td",
 					{ class: "aa-bvactions" },
-					m.b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build mit dem Skill in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build mit dem Skill in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+					m.b.snapshot ? h("button", { type: "button", class: "aa-btn aa-small", title: "Snapshot mit dem aktuellen Charakter überschreiben", onclick: () => overwriteSnapshot(m.b.id) }, "Überschreiben") : null,
 					h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
 				)
 			);
@@ -3742,7 +3771,7 @@
 				{ class: "aa-bvbar" },
 				partySearch,
 				members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
-				stale ? h("span", { class: "aa-warn" }, currentChanged && pb.enemy === enemy ? "Aktueller Charakter geändert – neu berechnen" : "Monster geändert – neu berechnen") : ""
+				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
 			),
 			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles) : "",
 			members.length
