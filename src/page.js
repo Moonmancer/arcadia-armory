@@ -370,6 +370,7 @@
 		compareBuilds: [], // build ids in the "Build-Vergleich" section below the combat simulator
 		party: [], // "Party-Battle" members: { uid, build, skill, start, gospel: { stats, atk } } (skill null = the build's own; start = attacks from this % of the monster's HP, default 100)
 		partyEnsembles: [], // ENSEMBLES keys switched on in the Party-Battle
+		partyBuffs: [], // PARTY_BUFFS keys switched on in the Party-Battle
 		partyMonsterAtk: null, // B_AtkSkill value for the Party-Battle (null = as in the calculator)
 		partyEqPlayers: null, // "Players in Range" for Earth Quake in the Party-Battle (null = party size)
 		hideUnavailable: false, // hide calculator items / cards marked "[Unavailable]" (own copies stay)
@@ -3317,16 +3318,36 @@
 		return typeof n_A_Buf2 === "undefined" ? { stats: false, atk: false } : { stats: Boolean(n_A_Buf2[GOSPEL.stats]), atk: Boolean(n_A_Buf2[GOSPEL.atk]) };
 	}
 
-	function applyGospel(g) {
-		if (!g || typeof n_A_Buf2 === "undefined") return;
+	// Buffs of the party for everyone (n_A_Buf2 index → value as in the
+	// calculator's "Supportive / Party Skills"). A switched-on buff is put on top
+	// of what the build saved; switched off, the build keeps its own.
+	const PARTY_BUFFS = [
+		{ key: "gloria", name: "Gloria", idx: 3, value: 1, info: "LUK +30" },
+		{ key: "angelus", name: "Angelus", idx: 4, value: 10, info: "Level 10: VIT-DEF +50 %" },
+		{ key: "ar", name: "Adrenaline Rush", idx: 6, value: 1, info: "Regular AR: ASPD mit Axt / Keule" },
+		{ key: "wp", name: "Weapon Perfection", idx: 7, value: 1, info: "kein Größen-Malus" },
+		{ key: "pt", name: "Power-Thrust", idx: 8, value: 1, info: "ATK +5 % für die Party" },
+	];
+
+	// Sets n_A_Buf2 values on the loaded build ({ index: value }); an open
+	// "Supportive / Party Skills" section is read by calc(), so it is redrawn.
+	function applyBuf2(values) {
+		if (typeof n_A_Buf2 === "undefined") return;
 		let changed = false;
-		for (const [k, idx] of Object.entries(GOSPEL)) {
-			if (g[k] == null || Boolean(n_A_Buf2[idx]) === g[k]) continue;
-			n_A_Buf2[idx] = g[k] ? 1 : 0;
+		for (const [idx, v] of Object.entries(values)) {
+			if (Number(n_A_Buf2[idx]) === v) continue;
+			n_A_Buf2[idx] = v;
 			changed = true;
 		}
-		// An open "Supportive / Party Skills" section is read by calc(): redraw it.
 		if (changed && typeof BufSW === "function" && typeof n_SkillSW !== "undefined" && n_SkillSW) quietly(() => BufSW(n_SkillSW));
+	}
+
+	// Gospel of the member and the party buffs.
+	function applyGospel(g) {
+		const values = {};
+		for (const b of PARTY_BUFFS) if (state.settings.partyBuffs.includes(b.key) && typeof n_A_Buf2 !== "undefined" && Number(n_A_Buf2[b.idx]) < b.value) values[b.idx] = b.value;
+		for (const [k, idx] of Object.entries(GOSPEL)) if (g && g[k] != null) values[idx] = g[k] ? 1 : 0;
+		applyBuf2(values);
 	}
 
 	// Puts the member's attack skill on the loaded build (max level, as the
@@ -3669,6 +3690,29 @@
 				)
 			)
 		);
+		const buffToggles = h(
+			"span",
+			{ class: "aa-pbens", title: "Buffs für alle Mitglieder (zusätzlich zu dem, was die Builds gespeichert haben)" },
+			"Party-Buffs: ",
+			PARTY_BUFFS.map((b) =>
+				h(
+					"label",
+					{ title: b.info },
+					h("input", {
+						type: "checkbox",
+						checked: state.settings.partyBuffs.includes(b.key),
+						onchange: (ev) => {
+							const on = new Set(state.settings.partyBuffs);
+							ev.target.checked ? on.add(b.key) : on.delete(b.key);
+							state.settings.partyBuffs = PARTY_BUFFS.map((x) => x.key).filter((k) => on.has(k));
+							save();
+							evaluateParty();
+						},
+					}),
+					" " + b.name
+				)
+			)
+		);
 		const stat = (label, value, title) => h("div", { class: "aa-pbstat", title: title || "" }, h("span", { class: "aa-dim" }, label), h("strong", null, value));
 		const monsterCard = h(
 			"div",
@@ -3783,7 +3827,7 @@
 				members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
 				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
 			),
-			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles) : "",
+			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles, buffToggles) : "",
 			members.length
 				? h(
 						"div",
