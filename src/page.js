@@ -2846,14 +2846,14 @@
 	// "Save & Load" box: a row to save / load the character as Armory build
 	// ---------------------------------------------------------------------------
 
-	const armoryNames = h("datalist", { id: "aa-armory-builds" });
-	const armoryInput = h("input", {
-		type: "text",
-		class: "aa-armoryname",
-		list: "aa-armory-builds",
+	const armorySearch = buildSearch({
+		getBuilds: () => state.builds,
 		placeholder: "Build-Name – zum Speichern frei wählbar, zum Laden einen gespeicherten wählen",
-		autocomplete: "off",
+		fill: true,
+		onEnter: () => armoryLoad(),
+		inputClass: "aa-armoryname",
 	});
+	const armoryInput = armorySearch.querySelector("input");
 	const armoryStatus = h("span", { class: "aa-armorystatus aa-dim" });
 	const armoryRow = h(
 		"span",
@@ -2863,22 +2863,10 @@
 		" ",
 		h("input", { type: "button", class: "loadURL", value: "Armory: Laden", title: "Gespeicherten Armory-Build in den Calculator laden", onclick: () => armoryLoad() }),
 		" ",
-		armoryInput,
-		armoryNames,
+		armorySearch,
 		" ",
 		armoryStatus
 	);
-	armoryInput.addEventListener("focus", updateArmoryNames);
-	armoryInput.addEventListener("keydown", (e) => {
-		if (e.key === "Enter") {
-			e.preventDefault();
-			armoryLoad();
-		}
-	});
-
-	function updateArmoryNames() {
-		armoryNames.replaceChildren(...state.builds.map((b) => h("option", { value: b.name, label: b.job })));
-	}
 
 	function findBuildByName(name) {
 		const n = name.trim().toLowerCase();
@@ -2896,7 +2884,6 @@
 		if (existing && !confirm(`„${existing.name}“ mit dem aktuellen Charakter überschreiben?`)) return;
 		saveBuild(existing ? existing.name : name, existing ? existing.id : undefined);
 		armoryInput.value = existing ? existing.name : name;
-		updateArmoryNames();
 		armoryMessage(existing ? `„${existing.name}“ überschrieben.` : `Als „${name}“ gespeichert.`);
 	}
 
@@ -3167,8 +3154,11 @@
 	// Search field for saved builds (name or class). One element per section that
 	// survives the section's redraws, so typing isn't interrupted by a
 	// recalculation. getBuilds() gives the builds that can be picked.
-	function buildSearch({ getBuilds, onPick, placeholder }) {
-		const input = h("input", { type: "text", class: "aa-bsinput", placeholder, autocomplete: "off", spellcheck: "false" });
+	// fill: a picked build only puts its name into the field (Enter then calls
+	// onEnter with the text); without matches the list stays closed, so a new
+	// name can be typed freely.
+	function buildSearch({ getBuilds, onPick, placeholder, fill = false, onEnter = null, inputClass = "" }) {
+		const input = h("input", { type: "text", class: "aa-bsinput " + inputClass, placeholder, autocomplete: "off", spellcheck: "false" });
 		const list = h("div", { class: "aa-bslist" });
 		const wrap = h("span", { class: "aa-bsearch" }, input, list);
 		let shown = [];
@@ -3178,9 +3168,9 @@
 			list.replaceChildren();
 		};
 		const pick = (b) => {
-			input.value = "";
+			input.value = fill ? b.name : "";
 			close();
-			onPick(b);
+			if (onPick) onPick(b);
 		};
 		const render = () => {
 			const tokens = searchNorm(input.value).split(" ").filter(Boolean);
@@ -3190,6 +3180,7 @@
 				return tokens.every((t) => hay.includes(" " + t) || hay.includes(t));
 			});
 			active = Math.min(active, Math.max(0, shown.length - 1));
+			if (fill && !shown.length) return close();
 			list.replaceChildren(
 				...(shown.length
 					? shown.map((b, i) =>
@@ -3231,9 +3222,14 @@
 				render();
 			} else if (e.key === "Enter") {
 				e.preventDefault();
-				if (shown[active]) pick(shown[active]);
+				const open = list.classList.contains("aa-open");
+				const exact = shown[active] && shown[active].name.toLowerCase() === input.value.trim().toLowerCase();
+				if (fill && (!open || !shown[active] || exact)) {
+					close();
+					if (onEnter) onEnter(input.value);
+				} else if (shown[active]) pick(shown[active]);
 			} else if (e.key === "Escape") {
-				input.value = "";
+				if (!fill) input.value = "";
 				close();
 				input.blur();
 			}

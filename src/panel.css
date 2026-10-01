@@ -489,5 +489,7 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-barextra { display: contents; }
 
 /* Save & Load: Armory row */
-.aa-armoryrow input.aa-armoryname { width: 40%; min-width: 240px; }
+.aa-armoryrow .aa-bsearch { width: 40%; min-width: 260px; }
+.aa-bsearch input.aa-bsinput.aa-armoryname { width: 100%; }
+.aa-armoryrow .aa-bslist { text-align: left; }
 .aa-armorystatus { font-size: 11px; }
