@@ -394,8 +394,14 @@
 		}
 	}
 
+	// Every save comes back as a storage change (that is how other open
+	// calculator tabs stay in sync). Our own echo is ignored: after quick changes
+	// it carries an older state and would undo the later ones.
+	const TAB_ID = Math.random().toString(36).slice(2, 10);
+
 	function save() {
-		window.postMessage({ aa: "toBridge", type: "save", data: { version: 1, items: state.items, unmatched: state.unmatched, builds: state.builds, snapshots: state.snapshots, settings: state.settings } }, window.location.origin);
+		const data = { version: 1, writer: TAB_ID, items: state.items, unmatched: state.unmatched, builds: state.builds, snapshots: state.snapshots, settings: state.settings };
+		window.postMessage({ aa: "toBridge", type: "save", data }, window.location.origin);
 	}
 
 	window.addEventListener("message", (event) => {
@@ -409,6 +415,7 @@
 		}
 		if (event.data.type !== "data") return;
 		const d = event.data.data || {};
+		if (d.writer === TAB_ID) return; // echo of our own save
 		state.items = Array.isArray(d.items) ? d.items : [];
 		state.unmatched = Array.isArray(d.unmatched) ? d.unmatched : [];
 		state.builds = Array.isArray(d.builds) ? d.builds : [];
@@ -2961,10 +2968,13 @@
 		if (state.settings.party.some((m) => m.build === id)) evaluateParty();
 	}
 
-	// Snapshots that are in neither section anymore are dropped.
+	// Snapshots that are in neither section anymore are dropped, and so are
+	// entries whose build no longer exists.
 	function pruneSnapshots() {
 		const used = new Set([...state.settings.compareBuilds, ...state.settings.party.map((m) => m.build)]);
 		state.snapshots = state.snapshots.filter((x) => used.has(x.id));
+		state.settings.compareBuilds = state.settings.compareBuilds.filter((id) => lookupBuild(id));
+		state.settings.party = state.settings.party.filter((m) => lookupBuild(m.build));
 	}
 
 	// Metrics and combat box of each build against the current monster; the
