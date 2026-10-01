@@ -3127,6 +3127,11 @@
 			render();
 		});
 		input.addEventListener("blur", close);
+		// Also on any click outside (a blur doesn't always arrive, e.g. when the
+		// field lost the focus while the window was in the background).
+		document.addEventListener("mousedown", (e) => {
+			if (list.classList.contains("aa-open") && !wrap.contains(e.target)) close();
+		});
 		input.addEventListener("keydown", (e) => {
 			if (e.key === "ArrowDown" || e.key === "ArrowUp") {
 				e.preventDefault();
@@ -3147,6 +3152,23 @@
 
 	const bv = { results: new Map(), enemy: null }; // build id -> { metrics, box }; enemy they were computed for
 	const bvBody = h("div", { class: "main aa-bv" });
+
+	// A section's search field stays where it is when the section is redrawn:
+	// taking a focused field out of the page (even to put it back) drops the
+	// focus, so a redraw during a click into it lost the input. Only the parts
+	// next to and below it are replaced.
+	function sectionLayout(body, search) {
+		const extra = h("span", { class: "aa-barextra" });
+		const rest = h("div", { class: "aa-sectionrest" });
+		const bar = h("div", { class: "aa-bvbar" }, search, extra);
+		return {
+			render(barItems, restItems) {
+				if (bar.parentNode !== body) body.replaceChildren(bar, rest);
+				extra.replaceChildren(...barItems.filter((x) => x != null && x !== ""));
+				rest.replaceChildren(...restItems.filter((x) => x != null && x !== ""));
+			},
+		};
+	}
 	const bvSection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Build-Vergleich"), bvBody);
 
 	function placeBuildCompare() {
@@ -3195,6 +3217,8 @@
 		placeholder: "Build zum Vergleich hinzufügen – Name oder Klasse …",
 	});
 
+	const bvLayout = sectionLayout(bvBody, bvSearch);
+
 	function renderBuildCompare() {
 		placeBuildCompare();
 		const chosen = state.settings.compareBuilds.map(lookupBuild).filter(Boolean);
@@ -3219,19 +3243,18 @@
 			);
 		};
 
-		bvBody.replaceChildren(
-			h(
-				"div",
-				{ class: "aa-bvbar" },
-				bvSearch,
+		bvLayout.render(
+			[
 				chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
 				h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
-				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
-			),
-			state.builds.length === 0 && !chosen.length
-				? h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen. Builds speichern: Armory-Panel → „Builds“ (oder die Calculator-Saves importieren).")
-				: "",
-			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : ""
+				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null,
+			],
+			[
+				state.builds.length === 0 && !chosen.length
+					? h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen. Builds speichern: Armory-Panel → „Builds“ (oder die Calculator-Saves importieren).")
+					: "",
+				chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : "",
+			]
 		);
 		renderParty();
 	}
@@ -3600,6 +3623,8 @@
 		placeholder: "Build zur Party hinzufügen – Name oder Klasse …",
 	});
 
+	const partyLayout = sectionLayout(partyBody, partySearch);
+
 	function renderParty() {
 		placeBuildCompare();
 		const members = partyMembers();
@@ -3819,14 +3844,12 @@
 			);
 		};
 
-		partyBody.replaceChildren(
-			h(
-				"div",
-				{ class: "aa-bvbar" },
-				partySearch,
+		partyLayout.render(
+			[
 				members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
-				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
-			),
+				stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : "",
+			],
+			[
 			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles, buffToggles) : "",
 			members.length
 				? h(
@@ -3840,7 +3863,8 @@
 							h("tbody", null, members.map(row))
 						)
 				  )
-				: h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen – derselbe Build darf mehrfach dabei sein, jedes Mitglied mit eigenem Skill.")
+				: h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen – derselbe Build darf mehrfach dabei sein, jedes Mitglied mit eigenem Skill."),
+			]
 		);
 	}
 

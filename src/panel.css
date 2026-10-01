@@ -484,3 +484,6 @@ tr.tequip > td > table > tbody > tr > td {
 
 /* Skill combo (e.g. Double Strafe -> Beast Strafing) */
 .aa-comboinfo { margin-top: 3px; font: 11px/1.3 sans-serif; font-variant-numeric: tabular-nums; opacity: 0.85; }
+
+/* Build comparison / Party-Battle: fixed search bar, redrawn parts next to it */
+.aa-barextra { display: contents; }
