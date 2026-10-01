@@ -487,3 +487,7 @@ tr.tequip > td > table > tbody > tr > td {
 
 /* Build comparison / Party-Battle: fixed search bar, redrawn parts next to it */
 .aa-barextra { display: contents; }
+
+/* Save & Load: Armory row */
+.aa-armoryrow input.aa-armoryname { width: 40%; min-width: 240px; }
+.aa-armorystatus { font-size: 11px; }

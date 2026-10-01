@@ -1305,7 +1305,7 @@
 		// Only select rebuilds count: added / removed selects, options or optgroups.
 		// Result texts the calculator rewrites after every calc() (HP, ATK, ...) and
 		// the add-on's own elements are ignored.
-		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, .aa-comboinfo, option[data-aa-shadow], option[data-aa-combo]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv"));
+		const ours = (n) => n.nodeType === 1 && (n.matches(".aa-combo, .aa-swap, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, .aa-comboinfo, .aa-armoryrow, option[data-aa-shadow], option[data-aa-combo]") || n.closest(".aa-combo, .aa-swapdelta, .aa-woe-toggle, .aa-statgain, .aa-stat, .aa-bv, .aa-comboinfo, .aa-armoryrow"));
 		const selectish = (n) => n.nodeType === 1 && !ours(n) && (n.matches("select, option, optgroup") || Boolean(n.querySelector("select")));
 		const relevant = (r) => r.target.tagName !== "OPTION" && !ours(r.target) && [...r.addedNodes, ...r.removedNodes].some(selectish);
 		if (!records.some(relevant)) return;
@@ -2841,6 +2841,79 @@
 		renderPanel();
 		renderBuildCompare();
 	}
+
+	// ---------------------------------------------------------------------------
+	// "Save & Load" box: a row to save / load the character as Armory build
+	// ---------------------------------------------------------------------------
+
+	const armoryNames = h("datalist", { id: "aa-armory-builds" });
+	const armoryInput = h("input", {
+		type: "text",
+		class: "aa-armoryname",
+		list: "aa-armory-builds",
+		placeholder: "Build-Name – zum Speichern frei wählbar, zum Laden einen gespeicherten wählen",
+		autocomplete: "off",
+	});
+	const armoryStatus = h("span", { class: "aa-armorystatus aa-dim" });
+	const armoryRow = h(
+		"span",
+		{ class: "aa-armoryrow" },
+		h("br"),
+		h("input", { type: "button", class: "saveURL", value: "Armory: Speichern", title: "Aktuellen Charakter als Build im Armory speichern", onclick: () => armorySave() }),
+		" ",
+		h("input", { type: "button", class: "loadURL", value: "Armory: Laden", title: "Gespeicherten Armory-Build in den Calculator laden", onclick: () => armoryLoad() }),
+		" ",
+		armoryInput,
+		armoryNames,
+		" ",
+		armoryStatus
+	);
+	armoryInput.addEventListener("focus", updateArmoryNames);
+	armoryInput.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") {
+			e.preventDefault();
+			armoryLoad();
+		}
+	});
+
+	function updateArmoryNames() {
+		armoryNames.replaceChildren(...state.builds.map((b) => h("option", { value: b.name, label: b.job })));
+	}
+
+	function findBuildByName(name) {
+		const n = name.trim().toLowerCase();
+		return state.builds.find((b) => b.name.toLowerCase() === n) || null;
+	}
+
+	function armoryMessage(text, warn) {
+		armoryStatus.textContent = text;
+		armoryStatus.className = "aa-armorystatus " + (warn ? "aa-warn" : "aa-dim");
+	}
+
+	function armorySave() {
+		const name = armoryInput.value.trim() || `${jobName()} ${state.builds.length + 1}`;
+		const existing = findBuildByName(name);
+		if (existing && !confirm(`„${existing.name}“ mit dem aktuellen Charakter überschreiben?`)) return;
+		saveBuild(existing ? existing.name : name, existing ? existing.id : undefined);
+		armoryInput.value = existing ? existing.name : name;
+		updateArmoryNames();
+		armoryMessage(existing ? `„${existing.name}“ überschrieben.` : `Als „${name}“ gespeichert.`);
+	}
+
+	function armoryLoad() {
+		const b = findBuildByName(armoryInput.value);
+		if (!b) return armoryMessage(armoryInput.value.trim() ? `Kein Build „${armoryInput.value.trim()}“ gespeichert.` : "Erst einen Build-Namen wählen.", true);
+		loadBuildCode(b.code);
+		renderPanel();
+		armoryMessage(`„${b.name}“ geladen.`);
+	}
+
+	function placeArmoryRow() {
+		if (armoryRow.isConnected) return;
+		const anchor = document.getElementById("otherURL_TEXT");
+		if (anchor) anchor.after(armoryRow);
+	}
+	placeArmoryRow();
 
 	// The calculator's own "Local Save" slots (localStorage "Slot<value>").
 	function calcSaveSlots() {
