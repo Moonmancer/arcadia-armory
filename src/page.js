@@ -428,9 +428,14 @@
 	let simulating = false;
 	let applying = false; // set while the panel equips an exact instance
 	let calcVersion = 0;
+	// Changes of the character outside the build comparison / Party-Battle
+	// calculations (which load other builds and restore the current one).
+	let userVersion = 0;
+	let evaluatingBuilds = 0;
 
 	function invalidate() {
 		calcVersion++;
+		if (!evaluatingBuilds) userVersion++;
 		scheduleComboSync();
 	}
 
@@ -2919,14 +2924,23 @@
 		return copy;
 	}
 
+	// The character currently set up in the calculator, usable like a saved build
+	// in the build comparison and the Party-Battle. Its code is taken when the
+	// calculation starts, so the comparison shows the state of that moment.
+	const CURRENT_ID = "current";
+	const currentPseudo = () => ({ id: CURRENT_ID, name: "Aktueller Charakter", job: jobName(), current: true });
+	const lookupBuild = (id) => (id === CURRENT_ID ? currentPseudo() : state.builds.find((b) => b.id === id));
+	const codeOf = (b, current) => (b.current ? current : b.code);
+
 	// Metrics and combat box of each build against the current monster; the
 	// current character is restored afterwards.
 	function evaluateBuilds(builds) {
+		evaluatingBuilds++;
 		const current = captureBuild();
 		const out = new Map();
 		try {
 			for (const b of builds) {
-				loadBuildCode(b.code);
+				loadBuildCode(codeOf(b, current));
 				out.set(b.id, { ...currentMetrics(), box: snapshotCombatBox() });
 			}
 		} finally {
@@ -2934,6 +2948,7 @@
 			// The loads rebuilt selects; refreshSelects() already ran, so these are not
 			// a change the user made (would mark the comparison as outdated).
 			formObserver.takeRecords();
+			evaluatingBuilds--;
 		}
 		return out;
 	}
@@ -3100,9 +3115,10 @@
 	}
 
 	function computeBuildCompare() {
-		const builds = state.settings.compareBuilds.map((id) => state.builds.find((b) => b.id === id)).filter(Boolean);
+		const builds = state.settings.compareBuilds.map(lookupBuild).filter(Boolean);
 		bv.results = evaluateBuilds(builds);
 		bv.enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		bv.version = userVersion;
 		renderBuildCompare();
 	}
 
@@ -3110,13 +3126,15 @@
 		if (!id || state.settings.compareBuilds.includes(id)) return;
 		state.settings.compareBuilds = [...state.settings.compareBuilds, id];
 		save();
-		const b = state.builds.find((x) => x.id === id);
+		const b = lookupBuild(id);
 		if (b) {
 			const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-			if (bv.enemy != null && bv.enemy !== enemy) computeBuildCompare(); // others are outdated too
+			const currentOutdated = state.settings.compareBuilds.includes(CURRENT_ID) && bv.version !== userVersion;
+			if ((bv.enemy != null && bv.enemy !== enemy) || currentOutdated) computeBuildCompare(); // others are outdated too
 			else {
 				evaluateBuilds([b]).forEach((v, k) => bv.results.set(k, v));
 				bv.enemy = enemy;
+				bv.version = userVersion;
 			}
 		}
 		renderBuildCompare();
@@ -3130,17 +3148,18 @@
 	}
 
 	const bvSearch = buildSearch({
-		getBuilds: () => state.builds.filter((b) => !state.settings.compareBuilds.includes(b.id)),
+		getBuilds: () => [currentPseudo(), ...state.builds].filter((b) => !state.settings.compareBuilds.includes(b.id)),
 		onPick: (b) => addToCompare(b.id),
 		placeholder: "Build zum Vergleich hinzufügen – Name oder Klasse …",
 	});
 
 	function renderBuildCompare() {
 		placeBuildCompare();
-		const chosen = state.settings.compareBuilds.map((id) => state.builds.find((b) => b.id === id)).filter(Boolean);
+		const chosen = state.settings.compareBuilds.map(lookupBuild).filter(Boolean);
 		const monster = form.B_Enemy ? form.B_Enemy.selectedOptions[0].text : "";
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		const stale = chosen.length > 0 && (bv.enemy !== enemy || chosen.some((b) => !bv.results.has(b.id)));
+		const currentChanged = chosen.some((b) => b.current) && bv.results.has(CURRENT_ID) && bv.version !== userVersion;
+		const stale = chosen.length > 0 && (bv.enemy !== enemy || currentChanged || chosen.some((b) => !bv.results.has(b.id)));
 
 		const card = (b) => {
 			const res = bv.results.get(b.id);
@@ -3151,7 +3170,7 @@
 					"div",
 					{ class: "aa-bvhead" },
 					h("div", { class: "aa-bvname" }, h("strong", null, b.name), h("div", { class: "aa-dim" }, b.job)),
-					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadBuildCode(b.code) }, "Laden"),
+					b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadBuildCode(b.code) }, "Laden"),
 					h("button", { type: "button", class: "aa-x", title: "Aus dem Vergleich entfernen", onclick: () => removeFromCompare(b.id) }, "×")
 				),
 				res && res.box ? res.box : h("p", { class: "aa-hint aa-bvempty" }, "Noch nicht berechnet – „Neu berechnen“ klicken.")
@@ -3159,16 +3178,17 @@
 		};
 
 		bvBody.replaceChildren(
-			state.builds.length === 0
-				? h("p", { class: "aa-hint" }, "Noch keine Builds gespeichert. Im Armory-Panel unter „Builds“ den aktuellen Charakter speichern oder die Calculator-Saves importieren.")
-				: h(
-						"div",
-						{ class: "aa-bvbar" },
-						bvSearch,
-						chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
-						h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
-						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : null
-				  ),
+			h(
+				"div",
+				{ class: "aa-bvbar" },
+				bvSearch,
+				chosen.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: computeBuildCompare }, "Neu berechnen") : null,
+				h("span", { class: "aa-dim" }, `Gegen: ${monster}`),
+				stale ? h("span", { class: "aa-warn" }, currentChanged && bv.enemy === enemy ? "Aktueller Charakter geändert – neu berechnen" : "Monster geändert – neu berechnen") : null
+			),
+			state.builds.length === 0 && !chosen.length
+				? h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen. Builds speichern: Armory-Panel → „Builds“ (oder die Calculator-Saves importieren).")
+				: "",
 			chosen.length ? h("div", { class: "aa-bvcards" }, chosen.map(card)) : ""
 		);
 		renderParty();
@@ -3184,7 +3204,7 @@
 	const partyBody = h("div", { class: "main aa-bv aa-party" });
 	const partySection = h("div", { class: "aa-bv" }, h("br"), h("h3", { class: "theader4 aa-bvtitle" }, "⚔ Party-Battle"), partyBody);
 
-	const partyMembers = () => state.settings.party.map((m) => ({ ...m, b: state.builds.find((x) => x.id === m.build) })).filter((m) => m.b);
+	const partyMembers = () => state.settings.party.map((m) => ({ ...m, b: lookupBuild(m.build) })).filter((m) => m.b);
 
 	// Support songs of Bard / Clown and Dancer / Gypsy, as the calculator's
 	// "Music and Dance Skills" keep them in n_A_Buf3: song level, the performer's
@@ -3307,7 +3327,7 @@
 	// "Players in Range" for Earth Quake: own value or the number of members
 	// (performers count, they are hit as well).
 	function partyEqPlayers() {
-		const n = state.settings.partyEqPlayers ?? state.settings.party.filter((m) => state.builds.some((b) => b.id === m.build)).length;
+		const n = state.settings.partyEqPlayers ?? state.settings.party.filter((m) => lookupBuild(m.build)).length;
 		return String(Math.max(1, Math.min(99, Math.round(Number(n)) || 1)));
 	}
 
@@ -3333,6 +3353,7 @@
 
 	function evaluateParty() {
 		const members = partyMembers();
+		evaluatingBuilds++;
 		const current = captureBuild();
 		const atkBefore = form.B_AtkSkill ? form.B_AtkSkill.value : null;
 		const subBefore = form.BSkillSubNum && "value" in form.BSkillSubNum ? form.BSkillSubNum.value : null;
@@ -3342,6 +3363,7 @@
 		pb.eq = EARTHQUAKE.has(String(pb.atk)) ? partyAtk.sub : null;
 		pb.results = new Map();
 		pb.enemy = form.B_Enemy ? form.B_Enemy.value : null;
+		partySkills.delete(CURRENT_ID); // its class / skills may have changed
 		const cacheSkills = (m) => {
 			const sel = form.A_ActiveSkill;
 			if (!sel || partySkills.has(m.build)) return;
@@ -3361,7 +3383,7 @@
 			for (const m of members) {
 				const song = songOf(m.skill);
 				if (!song && partySkills.has(m.build)) continue;
-				loadBuildCode(m.b.code);
+				loadBuildCode(codeOf(m.b, current));
 				cacheSkills(m);
 				if (!song || performerKind(n_A_JOB) !== song.bard) continue;
 				played.push({ ...songFromCurrent(song), uid: m.uid });
@@ -3381,7 +3403,7 @@
 			// 2) Everyone else, with the songs of the other members.
 			for (const m of members) {
 				if (pb.results.has(m.uid)) continue;
-				loadBuildCode(m.b.code);
+				loadBuildCode(codeOf(m.b, current));
 				cacheSkills(m);
 				applyPartySkill(m.skill);
 				applySongs(
@@ -3406,13 +3428,15 @@
 				window.calc();
 			}
 			formObserver.takeRecords();
+			evaluatingBuilds--;
 		}
+		pb.version = userVersion;
 		pb.hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
 		renderParty();
 	}
 
 	function addPartyMember(buildId) {
-		if (!state.builds.some((b) => b.id === buildId)) return;
+		if (!lookupBuild(buildId)) return;
 		state.settings.party = [...state.settings.party, { uid: Math.random().toString(36).slice(2, 10), build: buildId, skill: null }];
 		save();
 		evaluateParty();
@@ -3481,7 +3505,7 @@
 	}
 
 	const partySearch = buildSearch({
-		getBuilds: () => state.builds,
+		getBuilds: () => [currentPseudo(), ...state.builds],
 		onPick: (b) => addPartyMember(b.id),
 		placeholder: "Build zur Party hinzufügen – Name oder Klasse …",
 	});
@@ -3500,7 +3524,8 @@
 			setTimeout(evaluateParty, 0);
 		}
 		const enemy = form.B_Enemy ? form.B_Enemy.value : null;
-		const stale = members.length > 0 && (pb.enemy !== enemy || members.some((m) => !pb.results.has(m.uid)));
+		const currentChanged = members.some((m) => m.b.current) && pb.results.size > 0 && pb.version !== userVersion;
+		const stale = members.length > 0 && (pb.enemy !== enemy || currentChanged || members.some((m) => !pb.results.has(m.uid)));
 		const monster = form.B_Enemy && form.B_Enemy.selectedOptions[0] ? form.B_Enemy.selectedOptions[0].text.trim() : "";
 		const known = members.map((m) => pb.results.get(m.uid)).filter(Boolean);
 		const total = known.reduce((sum, r) => sum + r.dps, 0);
@@ -3638,7 +3663,7 @@
 					h(
 						"td",
 						{ class: "aa-bvactions" },
-						h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+						m.b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
 						h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
 					)
 				);
@@ -3656,22 +3681,20 @@
 				h(
 					"td",
 					{ class: "aa-bvactions" },
-					h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build mit dem Skill in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
+					m.b.current ? null : h("button", { type: "button", class: "aa-btn aa-small", title: "Diesen Build mit dem Skill in den Calculator laden", onclick: () => loadPartyMember(m) }, "Laden"),
 					h("button", { type: "button", class: "aa-x", title: "Aus der Party entfernen", onclick: () => removePartyMember(m.uid) }, "×")
 				)
 			);
 		};
 
 		partyBody.replaceChildren(
-			state.builds.length === 0
-				? h("p", { class: "aa-hint" }, "Noch keine Builds gespeichert. Im Armory-Panel unter „Builds“ Charaktere speichern, dann hier zur Party hinzufügen.")
-				: h(
-						"div",
-						{ class: "aa-bvbar" },
-						partySearch,
-						members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
-						stale ? h("span", { class: "aa-warn" }, "Monster geändert – neu berechnen") : ""
-				  ),
+			h(
+				"div",
+				{ class: "aa-bvbar" },
+				partySearch,
+				members.length ? h("button", { type: "button", class: "aa-btn aa-small" + (stale ? " aa-primary" : ""), onclick: evaluateParty }, "Neu berechnen") : "",
+				stale ? h("span", { class: "aa-warn" }, currentChanged && pb.enemy === enemy ? "Aktueller Charakter geändert – neu berechnen" : "Monster geändert – neu berechnen") : ""
+			),
 			members.length ? h("div", { class: "aa-bvbar aa-pbopts" }, monsterAtkSelect, eqPlayers, ensembleToggles) : "",
 			members.length
 				? h(
@@ -3685,9 +3708,7 @@
 							h("tbody", null, members.map(row))
 						)
 				  )
-				: state.builds.length
-				? h("p", { class: "aa-hint" }, "Builds auswählen – derselbe Build darf mehrfach dabei sein, jedes Mitglied mit eigenem Skill.")
-				: ""
+				: h("p", { class: "aa-hint" }, "Den aktuellen Charakter oder gespeicherte Builds hinzufügen – derselbe Build darf mehrfach dabei sein, jedes Mitglied mit eigenem Skill.")
 		);
 	}
 
