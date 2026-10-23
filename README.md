@@ -69,7 +69,8 @@ und Party-Battle rechnen mit der ganzen Folge, gespeicherte Builds merken sich d
 
 Bei **Asura Strike** zeigt eine Zeile unter der Skill-Auswahl, ab wie viel verbleibender SP das gewählte Monster mit
 der aktuellen Ausrüstung sicher (Mindestschaden) bzw. im Schnitt mit einem Schlag fällt – oder dass es auch mit
-max SP nicht reicht.
+max SP nicht reicht. Bei **Asura Strike (Max SP −1)** steht stattdessen die nötige Max SP – mit ✓, wenn die
+aktuelle reicht, sonst wie viel fehlt.
 
 ## Installation
 

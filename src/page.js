@@ -579,11 +579,16 @@
 	const asuraInfo = h("div", { class: "aa-comboinfo aa-asurainfo" });
 	let asuraVersion = null;
 
+	// "Asura Strike (Max SP -1)" uses the same formula with max SP - 1 as SP; it is
+	// calculated through the normal Asura Strike (switched in the background) and
+	// shown as the max SP needed.
 	function updateAsuraInfo() {
 		const sel = form.A_ActiveSkill;
-		const sub = form.SkillSubNum;
-		const asura = typeof SKILLID !== "undefined" && sel && Number(sel.value) === SKILLID.MO_EXTREMITYFIST && !activeCombo();
-		if (!asura || !sub || !("value" in sub)) {
+		const S = typeof SKILLID !== "undefined" ? SKILLID : {};
+		const skill = sel ? Number(sel.value) : null;
+		const maxVariant = skill === S.MO_EXTREMITYFIST_SP && hasOption(sel, S.MO_EXTREMITYFIST);
+		const asura = sel && (skill === S.MO_EXTREMITYFIST || maxVariant) && !activeCombo();
+		if (!asura || (!maxVariant && !(form.SkillSubNum && "value" in form.SkillSubNum))) {
 			asuraInfo.remove();
 			asuraVersion = null;
 			return;
@@ -593,6 +598,16 @@
 		if (asuraVersion === calcVersion) return;
 		asuraVersion = calcVersion;
 
+		const lvSel = form.A_ActiveSkillLV;
+		const lv = lvSel ? lvSel.value : null;
+		const switchSkill = (id) => {
+			sel.value = String(id);
+			if (typeof ClickActiveSkill === "function") quietly(() => ClickActiveSkill());
+			if (lvSel && lv != null && hasOption(lvSel, lv)) lvSel.value = lv;
+		};
+		simulating = true;
+		if (maxVariant) switchSkill(S.MO_EXTREMITYFIST); // creates the "Remaining SP" field
+		const sub = form.SkillSubNum;
 		const keep = sub.value;
 		const at = (sp) => {
 			sub.value = String(sp);
@@ -612,27 +627,37 @@
 			}
 			return lo;
 		};
-		simulating = true;
 		let text;
 		let title = "";
 		try {
 			origCalc();
 			const hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
 			const maxSp = Math.max(1, Math.floor(Number(n_A_MaxSP) || 1));
-			const full = at(maxSp);
-			const sure = search(maxSp, hp, (d) => d.min);
-			const avg = search(maxSp, hp, (d) => d.avg);
+			// The Max SP -1 variant shows the max SP needed, also beyond the current one.
+			const limit = maxVariant ? Math.max(maxSp, 20000) : maxSp;
+			const full = at(maxVariant ? maxSp - 1 : maxSp);
+			const sure = search(limit, hp, (d) => d.min);
+			const avg = search(limit, hp, (d) => d.avg);
+			// Max SP -1 variant: the needed SP is reached with max SP = SP + 1, and the
+			// search range is open upwards (more max SP than now).
+			const name = maxVariant ? "Asura Strike (Max SP −1)" : "Asura Strike";
+			const fmt = (sp) => (maxVariant ? `${sp + 1} Max SP` : `${sp} SP`);
 			if (!hp) text = "";
 			else if (avg == null)
-				text = `Asura Strike: kein One-Shot – auch mit max SP (${maxSp}) nur ${full.max.toLocaleString("en-US")} von ${hp.toLocaleString("en-US")} HP`;
+				text = `${name}: kein One-Shot – auch mit max SP (${maxVariant ? "bis " + limit : maxSp}) nur ${(maxVariant ? at(limit) : full).max.toLocaleString("en-US")} von ${hp.toLocaleString("en-US")} HP`;
 			else {
-				text = sure != null ? `Asura Strike One-Shot: sicher ab ${sure} SP` : `Asura Strike One-Shot: nicht sicher (Mindestschaden reicht auch mit max SP nicht)`;
-				if (avg !== sure) text += ` · im Schnitt ab ${avg} SP`;
+				text = sure != null ? `${name} One-Shot: sicher ab ${fmt(sure)}` : `${name} One-Shot: nicht sicher (Mindestschaden reicht nicht)`;
+				if (avg !== sure) text += ` · im Schnitt ab ${fmt(avg)}`;
 				text += ` · Monster-HP ${hp.toLocaleString("en-US")} · max SP ${maxSp}`;
-				title = `Mit max SP (${maxSp}): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
+				if (maxVariant) {
+					const need = sure != null ? sure + 1 : avg + 1;
+					text += need <= maxSp ? (sure != null ? " ✓" : " ✓ (im Schnitt)") : ` – fehlen ${need - maxSp} Max SP`;
+				}
+				title = `Mit ${maxVariant ? "max SP − 1" : "max SP"} (${maxVariant ? maxSp - 1 : maxSp} SP): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
 			}
 		} finally {
 			sub.value = keep;
+			if (maxVariant) switchSkill(S.MO_EXTREMITYFIST_SP);
 			origCalc();
 			simulating = false;
 		}
