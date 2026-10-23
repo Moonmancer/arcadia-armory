@@ -17,3 +17,4 @@
 .aa-cp-btn:hover:not(:disabled) { background: #3b3180; }
 .aa-cp-btn:disabled { opacity: 0.6; cursor: wait; }
 .aa-cp-status { font-size: 13px; }
+.aa-cp-btn.aa-cp-part { padding: 5px 10px; font-size: 12px; margin-right: 6px; }

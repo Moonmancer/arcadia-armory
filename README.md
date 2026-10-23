@@ -51,6 +51,10 @@ Firefox-Addon für den [Arcadia Online Character Calculator](https://calc.arcadi
    `python tools/update_woe_blacklist.py`.
 8. **Hände tauschen (Assassin)** – im Dual-Wield-Modus tauscht der Button **⇄** neben „Left Hand:“
    die Waffen der rechten und linken Hand samt Verfeinerung und Karten.
+9. **Charaktere für Discord kopieren** – im Control Panel unter *My Characters* kopiert der Button
+   **„Für Discord kopieren (/char import)“** Name, Klasse und Base-Level aller Charaktere (eine Zeile
+   `Name⇥Klasse⇥Level` pro Charakter) für den Discord-Party-Bot. Doppelte Namen bekommen den Account angehängt;
+   ist die Liste länger als die 4000 Zeichen des Import-Formulars, gibt es zusätzlich Buttons für die Teile.
 
 Gerechnet wird mit der Engine des Calculators selbst, also mit aktuellem Charakter, Skill und
 Monster. Maßstab (im Header neben den Filtern oder im Panel einstellbar):
@@ -147,6 +151,7 @@ dist/
   Simulation, Panel
 - `src/bridge.js` – läuft isoliert, speichert in `browser.storage.local`
 - `src/cp.js` – Button auf der Item-Liste im Control Panel, übergibt die Tabelle an den Calculator
+- `src/cp-chars.js` – Button auf der Charakterliste im Control Panel, kopiert Name/Klasse/Level für `/char import`
 - `src/panel.css` – Styles des Panels
 - `src/theme-armory.css`, `src/woe-blacklist.js` – generiert von `tools/make_armory_theme.py` bzw.
   `tools/update_woe_blacklist.py`

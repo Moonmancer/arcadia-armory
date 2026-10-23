@@ -25,6 +25,7 @@ FILES = [
     "src/woe-blacklist.js",
     "src/headgear-slots.js",
     "src/cp.js",
+    "src/cp-chars.js",
     "src/panel.css",
     "src/theme-armory.css",
     "src/cp.css",

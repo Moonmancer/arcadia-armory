@@ -63,6 +63,18 @@
         "src/cp.css"
       ],
       "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://cp.arcadia-online.org/masteraccount/characters/*"
+      ],
+      "js": [
+        "src/cp-chars.js"
+      ],
+      "css": [
+        "src/cp.css"
+      ],
+      "run_at": "document_idle"
     }
   ]
 }
