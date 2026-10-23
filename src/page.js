@@ -568,6 +568,78 @@
 	}
 
 	// Line next to the skill list: damage and time of the sequence.
+	// ---------------------------------------------------------------------------
+	// Asura Strike: the least remaining SP that one-shots the current monster
+	// ---------------------------------------------------------------------------
+	//
+	// Damage grows with the "Remaining SP" field (SkillSubNum): ATK × (7 + SP/10)
+	// + 250 + 150 × level, then modifiers, element and EDP. A binary search over
+	// that field with the calculator's own calc() finds the smallest SP whose
+	// minimum (guaranteed kill) or average damage reaches the monster's HP.
+	const asuraInfo = h("div", { class: "aa-comboinfo aa-asurainfo" });
+	let asuraVersion = null;
+
+	function updateAsuraInfo() {
+		const sel = form.A_ActiveSkill;
+		const sub = form.SkillSubNum;
+		const asura = typeof SKILLID !== "undefined" && sel && Number(sel.value) === SKILLID.MO_EXTREMITYFIST && !activeCombo();
+		if (!asura || !sub || !("value" in sub)) {
+			asuraInfo.remove();
+			asuraVersion = null;
+			return;
+		}
+		const anchor = form.A_ActiveSkillLV || sel;
+		if (anchor.nextElementSibling !== asuraInfo && anchor.nextElementSibling !== comboInfo) anchor.after(asuraInfo);
+		if (asuraVersion === calcVersion) return;
+		asuraVersion = calcVersion;
+
+		const keep = sub.value;
+		const at = (sp) => {
+			sub.value = String(sp);
+			origCalc();
+			const d = typeof Last_DMG_A !== "undefined" ? Last_DMG_A : w_DMG;
+			return { min: Number(d[0]) || 0, avg: Number(d[1]) || 0, max: Number(d[2]) || 0 };
+		};
+		// Smallest SP in [1, maxSp] with pick(damage) >= hp, or null.
+		const search = (maxSp, hp, pick) => {
+			if (pick(at(maxSp)) < hp) return null;
+			let lo = 1;
+			let hi = maxSp;
+			while (lo < hi) {
+				const mid = Math.floor((lo + hi) / 2);
+				if (pick(at(mid)) >= hp) hi = mid;
+				else lo = mid + 1;
+			}
+			return lo;
+		};
+		simulating = true;
+		let text;
+		let title = "";
+		try {
+			origCalc();
+			const hp = typeof n_B !== "undefined" ? Number(n_B[6]) || 0 : 0;
+			const maxSp = Math.max(1, Math.floor(Number(n_A_MaxSP) || 1));
+			const full = at(maxSp);
+			const sure = search(maxSp, hp, (d) => d.min);
+			const avg = search(maxSp, hp, (d) => d.avg);
+			if (!hp) text = "";
+			else if (avg == null)
+				text = `Asura Strike: kein One-Shot – auch mit max SP (${maxSp}) nur ${full.max.toLocaleString("en-US")} von ${hp.toLocaleString("en-US")} HP`;
+			else {
+				text = sure != null ? `Asura Strike One-Shot: sicher ab ${sure} SP` : `Asura Strike One-Shot: nicht sicher (Mindestschaden reicht auch mit max SP nicht)`;
+				if (avg !== sure) text += ` · im Schnitt ab ${avg} SP`;
+				text += ` · Monster-HP ${hp.toLocaleString("en-US")} · max SP ${maxSp}`;
+				title = `Mit max SP (${maxSp}): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
+			}
+		} finally {
+			sub.value = keep;
+			origCalc();
+			simulating = false;
+		}
+		asuraInfo.textContent = text;
+		asuraInfo.title = title;
+	}
+
 	const comboInfo = h("div", { class: "aa-comboinfo" });
 	function updateComboInfo() {
 		const sel = form.A_ActiveSkill;
@@ -1601,6 +1673,7 @@
 			syncCombos();
 			updateSwapButton();
 			updateSkillCombos();
+			updateAsuraInfo();
 			updateStatSteppers();
 			updateStatGains();
 			renderBuildCompare();

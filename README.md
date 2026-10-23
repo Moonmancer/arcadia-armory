@@ -67,6 +67,10 @@ Spiel nur direkt nach einer Double Strafe, daher rechnet das Add-on beide Skills
 beider). Eine Zeile unter der Skill-Auswahl zeigt die Aufteilung; Vorschau, Optimierer, Stat-Vorschlag, Build-Vergleich
 und Party-Battle rechnen mit der ganzen Folge, gespeicherte Builds merken sich die Auswahl.
 
+Bei **Asura Strike** zeigt eine Zeile unter der Skill-Auswahl, ab wie viel verbleibender SP das gewählte Monster mit
+der aktuellen Ausrüstung sicher (Mindestschaden) bzw. im Schnitt mit einem Schlag fällt – oder dass es auch mit
+max SP nicht reicht.
+
 ## Installation
 
 Die signierte Fassung liegt unter den
