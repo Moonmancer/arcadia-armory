@@ -642,18 +642,18 @@
 			// search range is open upwards (more max SP than now).
 			const name = maxVariant ? "Asura Strike (Max SP −1)" : "Asura Strike";
 			const fmt = (sp) => (maxVariant ? `${sp + 1} Max SP` : `${sp} SP`);
+			// Monster HP and max SP only in the tooltip; the line stays short.
+			const context = `Monster-HP ${hp.toLocaleString("en-US")} · max SP ${maxSp}`;
 			if (!hp) text = "";
-			else if (avg == null)
-				text = `${name}: kein One-Shot – auch mit max SP (${maxVariant ? "bis " + limit : maxSp}) nur ${(maxVariant ? at(limit) : full).max.toLocaleString("en-US")} von ${hp.toLocaleString("en-US")} HP`;
-			else {
+			else if (avg == null) {
+				text = `${name}: kein One-Shot – auch mit ${maxVariant ? "viel mehr" : "der"} max SP nicht`;
+				title = `${context}. Mit ${maxVariant ? limit : maxSp} SP höchstens ${(maxVariant ? at(limit) : full).max.toLocaleString("en-US")} Schaden.`;
+			} else {
 				text = sure != null ? `${name} One-Shot: sicher ab ${fmt(sure)}` : `${name} One-Shot: nicht sicher (Mindestschaden reicht nicht)`;
 				if (avg !== sure) text += ` · im Schnitt ab ${fmt(avg)}`;
-				text += ` · Monster-HP ${hp.toLocaleString("en-US")} · max SP ${maxSp}`;
-				if (maxVariant) {
-					const need = sure != null ? sure + 1 : avg + 1;
-					text += need <= maxSp ? (sure != null ? " ✓" : " ✓ (im Schnitt)") : ` – fehlen ${need - maxSp} Max SP`;
-				}
-				title = `Mit ${maxVariant ? "max SP − 1" : "max SP"} (${maxVariant ? maxSp - 1 : maxSp} SP): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
+				const need = sure != null ? sure : avg; // SP needed; the normal Asura Strike only searches up to max SP
+				if (maxVariant) text += need + 1 <= maxSp ? (sure != null ? " ✓" : " ✓ (im Schnitt)") : ` – fehlen ${need + 1 - maxSp} Max SP`;
+				title = `${context}. Mit ${maxVariant ? "max SP − 1" : "max SP"} (${maxVariant ? maxSp - 1 : maxSp} SP): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
 			}
 		} finally {
 			sub.value = keep;
