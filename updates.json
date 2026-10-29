@@ -56,6 +56,11 @@
           "version": "1.6.2",
           "update_link": "https://github.com/Moonmancer/arcadia-armory/releases/download/v1.6.2/arcadia-armory-1.6.2.xpi",
           "update_hash": "sha256:a70b6aa55d293a1704cd85fff958c5945883df69fb5c48e0d4d9fe0566570ca2"
+        },
+        {
+          "version": "1.6.3",
+          "update_link": "https://github.com/Moonmancer/arcadia-armory/releases/download/v1.6.3/arcadia-armory-1.6.3.xpi",
+          "update_hash": "sha256:eebf4c64ef14be6c0dab069eb58ffe457395a287b99f8d5920157d8e9bf40d9c"
         }
       ]
     }
