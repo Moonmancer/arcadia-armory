@@ -627,7 +627,7 @@
 			}
 			return lo;
 		};
-		let text;
+		let rows = []; // [label, value, status: "ok" | "bad" | ""]
 		let title = "";
 		try {
 			origCalc();
@@ -644,16 +644,22 @@
 			const fmt = (sp) => (maxVariant ? `${sp + 1} Max SP` : `${sp} SP`);
 			// Monster HP and max SP only in the tooltip; the line stays short.
 			const context = `Monster-HP ${hp.toLocaleString("en-US")} · max SP ${maxSp}`;
-			if (!hp) text = "";
+			// One row per kill chance: needed SP (Max SP for the Max SP -1 variant),
+			// and for that variant whether the current max SP is enough.
+			const status = (sp) => {
+				if (!maxVariant) return ["", "ok"]; // normal Asura Strike: found within max SP
+				const missing = sp + 1 - maxSp;
+				return missing <= 0 ? ["✓ reicht", "ok"] : [`(fehlen ${missing})`, "bad"];
+			};
+			if (!hp) rows = [];
 			else if (avg == null) {
-				text = `${name}: kein One-Shot – auch mit ${maxVariant ? "viel mehr" : "der"} max SP nicht`;
+				rows = [["Kein One-Shot", maxVariant ? "auch mit viel mehr Max SP nicht" : "auch mit max SP nicht", "bad"]];
 				title = `${context}. Mit ${maxVariant ? limit : maxSp} SP höchstens ${(maxVariant ? at(limit) : full).max.toLocaleString("en-US")} Schaden.`;
 			} else {
-				text = sure != null ? `${name} One-Shot: sicher ab ${fmt(sure)}` : `${name} One-Shot: nicht sicher (Mindestschaden reicht nicht)`;
-				if (avg !== sure) text += ` · im Schnitt ab ${fmt(avg)}`;
-				const need = sure != null ? sure : avg; // SP needed; the normal Asura Strike only searches up to max SP
-				if (maxVariant) text += need + 1 <= maxSp ? (sure != null ? " ✓" : " ✓ (im Schnitt)") : ` – fehlen ${need + 1 - maxSp} Max SP`;
-				title = `${context}. Mit ${maxVariant ? "max SP − 1" : "max SP"} (${maxVariant ? maxSp - 1 : maxSp} SP): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
+				if (sure != null) rows.push(["One-Shot sicher ab", fmt(sure), ...status(sure)]);
+				else rows.push(["One-Shot sicher", "nicht möglich", "", "bad"]);
+				if (avg !== sure) rows.push(["One-Shot im Schnitt ab", fmt(avg), ...status(avg)]);
+				title = `${name} – ${context}. Mit ${maxVariant ? "max SP − 1" : "max SP"} (${maxVariant ? maxSp - 1 : maxSp} SP): ${full.min.toLocaleString("en-US")} – ${full.max.toLocaleString("en-US")} Schaden. „Sicher“ = auch der Mindestschaden tötet.`;
 			}
 		} finally {
 			sub.value = keep;
@@ -661,7 +667,19 @@
 			origCalc();
 			simulating = false;
 		}
-		asuraInfo.textContent = text;
+		// rows: [label, value, note, state] (the kill-impossible row: [label, value, state])
+		asuraInfo.replaceChildren(
+			...rows.map((r) => {
+				const [label, value, note, state] = r.length === 3 ? [r[0], r[1], "", r[2]] : r;
+				return h(
+					"div",
+					{ class: "aa-ai-row" },
+					h("span", { class: "aa-ai-label" }, label),
+					h("span", { class: "aa-ai-value" + (state === "bad" && !note ? " aa-down" : "") }, value),
+					note ? h("span", { class: "aa-ai-note " + (state === "bad" ? "aa-down" : "aa-up") }, note) : ""
+				);
+			})
+		);
 		asuraInfo.title = title;
 	}
 

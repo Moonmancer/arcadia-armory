@@ -487,6 +487,12 @@ tr.tequip > td > table > tbody > tr > td {
 /* Info lines must not widen the calculator's result table: width 0 keeps them out of
    the table's width calculation, min-width 100% lets them use the width it has. */
 .aa-comboinfo { box-sizing: border-box; width: 0; min-width: 100%; white-space: normal; overflow-wrap: anywhere; }
+/* Asura Strike: one row per kill chance */
+.aa-asurainfo { margin: 4px 0 2px; padding: 3px 6px; border-left: 2px solid rgba(128, 128, 128, 0.5); opacity: 1; }
+.aa-asurainfo .aa-ai-row { display: flex; align-items: baseline; gap: 6px; }
+.aa-asurainfo .aa-ai-label { flex: 1; font-weight: normal; opacity: 0.85; }
+.aa-asurainfo .aa-ai-value { font-weight: bold; white-space: nowrap; }
+.aa-asurainfo .aa-ai-note { min-width: 6.5em; white-space: nowrap; font-weight: normal; }
 
 /* Build comparison / Party-Battle: fixed search bar, redrawn parts next to it */
 .aa-barextra { display: contents; }
