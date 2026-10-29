@@ -1320,6 +1320,10 @@
 		// Card selects only run StAllCalc(); refresh the battle results (combat
 		// simulator, damage) as well so the page shows what was just equipped.
 		if (!simulating) window.calc();
+		// The card selects changed last, so the "Item Data" box shows a card (or
+		// nothing for an empty slot); show the equipped item there again.
+		const item = el(slot.key);
+		if (!simulating && includeItem && item && item.value !== noneValue(item) && typeof window.ClickB_Item === "function") window.ClickB_Item(item.value);
 		refreshSelects();
 	}
 
