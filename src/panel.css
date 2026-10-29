@@ -496,3 +496,7 @@ tr.tequip > td > table > tbody > tr > td {
 .aa-bsearch input.aa-bsinput.aa-armoryname { width: 100%; }
 .aa-armoryrow .aa-bslist { text-align: left; }
 .aa-armorystatus { font-size: 11px; }
+
+/* Calculator: the skill's extra number field (e.g. Asura Strike "Remaining SP", maxlength 5)
+   is only size=2 wide; give it room for its digits. */
+input[name="SkillSubNum"][type="text"] { min-width: 6ch; box-sizing: content-box; font-variant-numeric: tabular-nums; }
